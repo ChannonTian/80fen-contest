@@ -312,8 +312,9 @@ function genFills(rest, j, trump, cap, leadCl) {
   return out.length ? out : [byJunk.slice(0, j)];
 }
 
-function genFollowCandidates(hand, lead, trump, opts, cap) {
+function genFollowCandidates(hand, lead, trump, opts, cap, fillCap) {
   cap = cap || 60;
+  fillCap = fillCap || 12;
   const S = E.filterSuit(hand, lead.suit, trump);
   const rest = [];
   for (let i = 0; i < hand.length; i++) if (E.effSuit(hand[i], trump) !== lead.suit) rest.push(hand[i]);
@@ -321,7 +322,7 @@ function genFollowCandidates(hand, lead, trump, opts, cap) {
   const ns = Math.min(k, S.length);
   const parts = genInSuitParts(S, lead, trump, opts, Math.max(8, cap));
   const j = k - ns;
-  const fills = genFills(rest, j, trump, 12, lead);
+  const fills = genFills(rest, j, trump, fillCap, lead);
   const out = [];
   const seen = new Set();
   for (let a = 0; a < parts.length; a++) {
@@ -340,8 +341,97 @@ function genFollowCandidates(hand, lead, trump, opts, cap) {
   return out;
 }
 
+/* ---------- 走子用的精简着法集(只给 2~4 个选项,给 rollout 用) ---------- */
+
+/* 从 cards 里挑出与 lead 同形状、top 最大的一手;挑不出返回 null */
+function bestShapeFrom(cards, lead, trump) {
+  if (cards.length < lead.cards.length) return null;
+  if (lead.type === 'single') {
+    let b = null, bo = -1;
+    for (let i = 0; i < cards.length; i++) {
+      const o = E.ordIdx(cards[i], trump);
+      if (o > bo) { bo = o; b = cards[i]; }
+    }
+    return b ? [b] : null;
+  }
+  const comps = E.decompose(cards, trump);
+  if (lead.type === 'pair') {
+    let b = null, bo = -1;
+    for (let i = 0; i < comps.length; i++) {
+      const c = comps[i];
+      if (c.type === 'pair' && c.top > bo) { bo = c.top; b = c.cards.slice(); }
+      else if (c.type === 'tractor' && c.top > bo) { bo = c.top; b = c.cards.slice(c.cards.length - 2); }
+    }
+    return b;
+  }
+  if (lead.type === 'tractor') {
+    let b = null, bo = -1;
+    for (let i = 0; i < comps.length; i++) {
+      const c = comps[i];
+      if (c.type === 'tractor' && c.len >= lead.len && c.top > bo) {
+        bo = c.top; b = c.cards.slice(c.cards.length - lead.len * 2);
+      }
+    }
+    return b;
+  }
+  return null;
+}
+
+/* 跟牌:最废的一手 + 最多两手「试图赢下来」的 */
+function quickFollowOptions(hand, lead, trump) {
+  const out = [forceLegalFollow(hand, lead, trump, null)];
+  const k = lead.cards.length;
+  const S = E.filterSuit(hand, lead.suit, trump);
+  if (S.length >= k) {
+    const w = bestShapeFrom(S, lead, trump);
+    if (w && w.length === k && E.isLegalFollow(hand, lead, w, trump, null)) out.push(w);
+  } else if (S.length === 0 && lead.suit !== 'T') {
+    const T = E.filterSuit(hand, 'T', trump);
+    const w = bestShapeFrom(T, lead, trump);
+    if (w && w.length === k && E.isLegalFollow(hand, lead, w, trump, null)) out.push(w);
+  }
+  /* 队友赢的时候把分垫出去 */
+  if (k === 1) {
+    let pt = null, pv = -1;
+    for (let i = 0; i < hand.length; i++) {
+      const p = E.cardPoints(hand[i]);
+      if (p > pv) { pv = p; pt = hand[i]; }
+    }
+    if (pv > 0 && pt) {
+      const c = [pt];
+      if (E.isLegalFollow(hand, lead, c, trump, null)) out.push(c);
+    }
+  }
+  return out;
+}
+
+/* 领出:每一门的最大组件 + 全局最废的一张 */
+function quickLeadOptions(hand, trump) {
+  const g = bySuit(hand, trump);
+  const keys = ['T', 'S', 'H', 'D', 'C'];
+  const out = [];
+  let junk = null, jv = 1e9;
+  for (let ki = 0; ki < keys.length; ki++) {
+    const cs = g[keys[ki]];
+    if (!cs.length) continue;
+    const comps = E.decompose(cs, trump);
+    let big = null, bo = -1;
+    for (let i = 0; i < comps.length; i++) {
+      if (comps[i].top > bo) { bo = comps[i].top; big = comps[i]; }
+    }
+    if (big) out.push(big.cards.slice());
+    for (let i = 0; i < cs.length; i++) {
+      const v = junkScore(cs[i], trump);
+      if (v < jv) { jv = v; junk = cs[i]; }
+    }
+  }
+  if (junk) out.push([junk]);
+  return out.length ? out : [[hand[0]]];
+}
+
 module.exports = {
-  bySuit, pairsAndSingles, junkScore, combos,
+  bySuit, pairsAndSingles, junkScore, combos, bestShapeFrom,
+  quickFollowOptions, quickLeadOptions,
   forceLegalLead, forceLegalFollow,
   genLeadCandidates, genThrowCandidates, genFollowCandidates, genFills,
 };

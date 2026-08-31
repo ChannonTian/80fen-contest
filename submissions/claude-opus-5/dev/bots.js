@@ -167,6 +167,9 @@ function sibling() {
   const S = require('../strategy.js');
   return S.makeAI({
     name: 'sibling',
+    /* 固定住,不要跟着 DEFAULTS 漂移 —— 它是长期对照的标尺 */
+    rollout: false, cvRuffAware: 0, voidAwarePool: true, evalV2: true, declV2: true,
+    ntGate: 8, declNoDealerBar: 0, rebelPts: 99, rebelTrump: 99,
     tempoW: 7, lossW: 1.3, overkillW: 0.22, drawTrumpW: 18,
     leadWinPts: 4.6, leadLosePts: 6.2, ptsPerCardLater: 2.6,
     breakPairW: 3, voidGainW: 2, throwBonus: 25,
@@ -174,4 +177,16 @@ function sibling() {
   });
 }
 
-module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling };
+/* 带 rollout 的同门对手(和本 AI 同架构、同强度级别) */
+function siblingR() {
+  const S = require('../strategy.js');
+  return S.makeAI({
+    name: 'siblingR',
+    tempoW: 7, lossW: 1.3, overkillW: 0.22, drawTrumpW: 18,
+    leadWinPts: 4.6, leadLosePts: 6.2, ptsPerCardLater: 2.6,
+    breakPairW: 3, voidGainW: 2, throwBonus: 25,
+    declProjNeed: 9, ruffPairFactor: 0.45, cvSure: 15, cvTrumpBase: 5,
+  });
+}
+
+module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling, siblingR };

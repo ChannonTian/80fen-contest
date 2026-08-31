@@ -66,6 +66,13 @@ const DEFAULTS = {
   throwNeedsWin: false,
   /* --- cardValue 的「光牌」价值要打毙牌折扣:副门 A 在大家都断门之后不值钱 --- */
   cvRuffAware: 0.8,
+  /* --- 残局采样走子:对静态分最高的几个候选,采样若干个一致的世界走到底再比 --- */
+  rollout: true,
+  rolloutMaxCards: 3,        // 手牌 ≤ 这个数才开
+  rolloutK: 12,              // 采样几个世界
+  rolloutM: 6,               // 只精算静态分最高的几个候选
+  rolloutKittyPrior: 4,
+  rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -93,6 +100,7 @@ const DEFAULTS = {
   discVoidTrumpGate: 5,      // 主牌少于这个数时短门没用
   discLostW: 1.0,            // 扣掉一张牌损失的潜力
   discKeepPtSafe: 0.45,      // 留在手上的分牌被对方吃走的概率
+  discOrdW: 0,               // 同为废牌时按大小细分(旧版扣底靠的就是这个)
   /* --- 末墩意识:抠底 = 底分 × 2 × 末墩每人张数 --- */
   lastTrickAware: false,
   lastTrickW: 1.0,
@@ -125,119 +133,115 @@ const DEFAULTS = {
   /* --- 仅供开发期探针:给出真实手牌,把概率模型换成精确判定。
    *     提交时 oracle 恒为 false,这条路径永不执行。 --- */
   oracle: false, oracleHands: null, __probe: null, oracleMaxCards: 99, oracleMinCards: 0,
+  __cache: null,
 };
 
 /* ---------------- 局面分析 ---------------- */
 
-function analyze(view) {
+/* 局面分析。每次决策都要用,所以做两件事:
+ *  1) 断门/得分按「完整墩」增量累计,不重扫整个 history
+ *  2) 把「某门里比某个序号大的暗牌有几张」预先做成 O(1) 查表
+ * 缓存挂在 AI 实例上(cache 参数),history 变短即认为换了一局。 */
+function analyze(view, cache) {
   const trump = view.trump || { suit: null, rank: view.trumpRank };
+  const hist = view.history;
+
+  let C = cache;
+  if (!C || C.histLen > hist.length || C.rank !== trump.rank || C.tsuit !== trump.suit || C.seat !== view.seat) {
+    C = { histLen: 0, nTricks: 0, voids: [{}, {}, {}, {}], teamPts: [0, 0],
+          histSeen: new Int8Array(85), hsizePlayed: [0, 0, 0, 0],
+          rank: trump.rank, tsuit: trump.suit, seat: view.seat };
+    if (cache) { cache.reset = true; }
+  }
+  /* 增量吃掉新出现的手 */
+  for (let i = C.histLen; i < hist.length; i++) {
+    const cs = hist[i].cards;
+    for (let j = 0; j < cs.length; j++) C.histSeen[keyOf(cs[j])]++;
+    C.hsizePlayed[hist[i].seat] += cs.length;
+  }
+  C.histLen = hist.length;
+  /* 增量结算新完成的墩 */
+  const done = Math.floor(hist.length / 4);
+  for (let t = C.nTricks; t < done; t++) {
+    const plays = [hist[t * 4], hist[t * 4 + 1], hist[t * 4 + 2], hist[t * 4 + 3]];
+    const lead = E.classify(plays[0].cards, trump);
+    if (lead) {
+      for (let i = 1; i < 4; i++) {
+        const p = plays[i];
+        let inSuit = 0;
+        for (let j = 0; j < p.cards.length; j++) if (E.effSuit(p.cards[j], trump) === lead.suit) inSuit++;
+        if (inSuit < p.cards.length) C.voids[p.seat][lead.suit] = true;
+      }
+      const r = E.resolveTrick(plays, trump);
+      C.teamPts[r.winner % 2] += r.points;
+    }
+  }
+  C.nTricks = done;
+
+  /* 暗牌 = 全副 − 我的手牌 − 已出的 − 我知道的底牌 */
   const unseen = new Int8Array(85);
   for (let s = 0; s < 4; s++) for (let r = 2; r <= 14; r++) unseen[s * 17 + r] = 2;
   unseen[4 * 17 + 15] = 2; unseen[4 * 17 + 16] = 2;
+  for (let i = 0; i < 85; i++) if (C.histSeen[i]) unseen[i] -= C.histSeen[i];
   const hand = view.hand;
   for (let i = 0; i < hand.length; i++) unseen[keyOf(hand[i])]--;
-  const hist = view.history;
-  for (let i = 0; i < hist.length; i++) {
-    const cs = hist[i].cards;
-    for (let j = 0; j < cs.length; j++) unseen[keyOf(cs[j])]--;
-  }
   const bk = view.buriedKnown;
   for (let i = 0; i < bk.length; i++) unseen[keyOf(bk[i])]--;
 
-  /* 断门推断 + 每队已得分 */
-  const voids = [{}, {}, {}, {}];
-  const teamPts = [0, 0];
-  const nTricks = Math.floor(hist.length / 4);
-  for (let t = 0; t < nTricks; t++) {
-    const plays = [];
-    for (let i = 0; i < 4; i++) plays.push(hist[t * 4 + i]);
-    const lead = E.classify(plays[0].cards, trump);
-    if (!lead) continue;
-    for (let i = 1; i < 4; i++) {
-      const p = plays[i];
-      let inSuit = 0;
-      for (let j = 0; j < p.cards.length; j++) if (E.effSuit(p.cards[j], trump) === lead.suit) inSuit++;
-      if (inSuit < p.cards.length) voids[p.seat][lead.suit] = true;
-    }
-    const r = E.resolveTrick(plays, trump);
-    teamPts[r.winner % 2] += r.points;
-  }
+  /* O(1) 查表:above[门][序号] = 该门里序号更大的暗牌张数 */
+  const KEYS = ['T', 'S', 'H', 'D', 'C'];
+  const above = {}, pairAbove = {}, suitTot = {};
+  for (let i = 0; i < 5; i++) { above[KEYS[i]] = new Int16Array(17); pairAbove[KEYS[i]] = new Int16Array(17); suitTot[KEYS[i]] = 0; }
   let hiddenTotal = 0;
-  for (let i = 0; i < 85; i++) if (unseen[i] > 0) hiddenTotal += unseen[i];
-
-  /* 各家剩几张牌:每人起手 25 张,减掉 history 里他出过的 */
-  const hsize = [25, 25, 25, 25];
-  for (let i = 0; i < hist.length; i++) hsize[hist[i].seat] -= hist[i].cards.length;
-
-  /* 每一门还有多少张暗牌 */
-  const SK = ['T', 'S', 'H', 'D', 'C'];
   const nSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
-  for (let sIdx = 0; sIdx < 5; sIdx++) {
-    const suit = sIdx === 4 ? 'X' : ALLSUITS[sIdx];
-    const lo = sIdx === 4 ? 15 : 2, hi = sIdx === 4 ? 16 : 14;
+  for (let si = 0; si < 5; si++) {
+    const suit = si === 4 ? 'X' : ALLSUITS[si];
+    const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
     for (let r = lo; r <= hi; r++) {
-      const c = unseen[sIdx * 17 + r];
-      if (c > 0) nSuit[E.effSuit({ suit: suit, rank: r, id: -1 }, trump)] += c;
+      const c = unseen[si * 17 + r];
+      if (c <= 0) continue;
+      hiddenTotal += c;
+      const probe = { suit: suit, rank: r, id: -1 };
+      const es = E.effSuit(probe, trump);
+      const o = E.ordIdx(probe, trump);
+      above[es][o] += c;
+      if (c >= 2) pairAbove[es][o] += 1;
+      suitTot[es] += c;
+      nSuit[es] += c;
     }
   }
+  for (let i = 0; i < 5; i++) {
+    const A1 = above[KEYS[i]], A2 = pairAbove[KEYS[i]];
+    for (let o = 15; o >= 0; o--) { A1[o] += A1[o + 1]; A2[o] += A2[o + 1]; }
+    /* A1[o] 现在是「序号 >= o」,要的是「> o」*/
+  }
+  const hsize = [25, 25, 25, 25];
+  for (let i = 0; i < 4; i++) hsize[i] -= C.hsizePlayed[i];
+
   return {
-    trump: trump, unseen: unseen, voids: voids, teamPts: teamPts, nTricks: nTricks,
+    trump: trump, unseen: unseen, voids: C.voids, teamPts: C.teamPts, nTricks: C.nTricks,
     hiddenTotal: hiddenTotal, hsize: hsize, nSuit: nSuit, seat: view.seat,
-    kittyUnknown: (view.buriedKnown && view.buriedKnown.length) ? 0 : (view.kittySize || 8),
-    w: null,
+    kittyUnknown: (bk && bk.length) ? 0 : (view.kittySize || 8),
+    w: null, above: above, pairAbove: pairAbove, suitTot: suitTot, cache: C,
   };
 }
 
 /* 同门里还没露面、比它大的牌有几张 */
 function beatersLeft(a, card, trump) {
-  const es = E.effSuit(card, trump);
+  const t = a.above[E.effSuit(card, trump)];
   const oi = E.ordIdx(card, trump);
-  let n = 0;
-  const u = a.unseen;
-  for (let s = 0; s < 5; s++) {
-    const suit = s === 4 ? 'X' : ALLSUITS[s];
-    const lo = s === 4 ? 15 : 2, hi = s === 4 ? 16 : 14;
-    for (let r = lo; r <= hi; r++) {
-      const cnt = u[s * 17 + r];
-      if (cnt <= 0) continue;
-      const c = { suit: suit, rank: r, id: -1 };
-      if (E.effSuit(c, trump) !== es) continue;
-      if (E.ordIdx(c, trump) > oi) n += cnt;
-    }
-  }
-  return n;
+  return oi >= 15 ? 0 : t[oi + 1];
 }
 
 /* 还剩几个能压过 top 的对子 */
 function pairBeatersLeft(a, top, es, trump) {
-  let n = 0;
-  const u = a.unseen;
-  for (let s = 0; s < 5; s++) {
-    const suit = s === 4 ? 'X' : ALLSUITS[s];
-    const lo = s === 4 ? 15 : 2, hi = s === 4 ? 16 : 14;
-    for (let r = lo; r <= hi; r++) {
-      if (u[s * 17 + r] < 2) continue;
-      const c = { suit: suit, rank: r, id: -1 };
-      if (E.effSuit(c, trump) !== es) continue;
-      if (E.ordIdx(c, trump) > top) n++;
-    }
-  }
-  return n;
+  const t = a.pairAbove[es];
+  if (!t) return 0;
+  return top >= 15 ? 0 : t[top + 1];
 }
 
 function unseenInSuit(a, es, trump) {
-  let n = 0;
-  const u = a.unseen;
-  for (let s = 0; s < 5; s++) {
-    const suit = s === 4 ? 'X' : ALLSUITS[s];
-    const lo = s === 4 ? 15 : 2, hi = s === 4 ? 16 : 14;
-    for (let r = lo; r <= hi; r++) {
-      const cnt = u[s * 17 + r];
-      if (cnt <= 0) continue;
-      if (E.effSuit({ suit: suit, rank: r, id: -1 }, trump) === es) n += cnt;
-    }
-  }
-  return n;
+  return a.suitTot[es] || 0;
 }
 
 /* 留牌价值:越高越舍不得出 */
@@ -421,7 +425,7 @@ function onRebel(cfg, view) {
 function discard(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   const groups = M.bySuit(hand, trump);
   const need = 8;
 
@@ -494,7 +498,7 @@ function ruffRisk(a, view, es, trump) {
 function lead(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   let cands = M.genLeadCandidates(hand, trump);
   const thr = M.genThrowCandidates(hand, trump, 24);
   for (let i = 0; i < thr.length; i++) cands.push(thr[i]);
@@ -533,7 +537,12 @@ function lead(cfg, view) {
     let cost = 0;
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
+    if (useRoll) scored.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
+  }
+  if (useRoll && scored.length > 1) {
+    const r = rolloutPick(cfg, a, view, scored, null, null);
+    if (r) return r;
   }
   if (!best) best = M.forceLegalLead(hand, trump);
   return best;
@@ -546,7 +555,7 @@ function follow(cfg, view, plays) {
   const hand = view.hand;
   const lead0 = E.classify(plays[0].cards, trump);
   if (!lead0) return M.forceLegalFollow(hand, E.classify(plays[0].cards, trump) || { cards: plays[0].cards, suit: 'T', type: 'single' }, trump, null);
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   const cands = M.genFollowCandidates(hand, lead0, trump, null, cfg.followCap, cfg.fillCap);
 
   const cur = E.resolveTrick(plays, trump);
@@ -557,6 +566,17 @@ function follow(cfg, view, plays) {
     (plays[1] ? E.countPoints(plays[1].cards) : 0) +
     (plays[2] ? E.countPoints(plays[2].cards) : 0);
   const PS = ptsScale(a, view, cfg);
+  const HSUM = handSummary(view, trump);
+  /* 先把已出的几手定型,循环里只 classify 我自己的候选 */
+  const leadSig = E.sigOf(lead0);
+  let preBest = lead0, preWinIdx = 0, prePts = E.countPoints(plays[0].cards);
+  for (let i = 1; i < plays.length; i++) {
+    prePts += E.countPoints(plays[i].cards);
+    const cl = E.classify(plays[i].cards, trump);
+    if (!cl || E.sigOf(cl) !== leadSig) continue;
+    if (cl.suit === preBest.suit) { if (cl.top > preBest.top) { preBest = cl; preWinIdx = i; } }
+    else if (cl.suit === 'T') { preBest = cl; preWinIdx = i; }
+  }
   const isDecl2 = view.myTeam === (view.declSeat % 2);
   const LOSSW = (isDecl2 ? cfg.declLossW : cfg.defLossW) || cfg.lossW;
   const TEMPOW = (isDecl2 ? cfg.declTempoW : cfg.defTempoW) || cfg.tempoW;
@@ -581,7 +601,12 @@ function follow(cfg, view, plays) {
     let cost = 0;
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
+    if (useRoll) scored.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
+  }
+  if (useRoll && scored.length > 1) {
+    const r = rolloutPick(cfg, a, view, scored, plays, lead0);
+    if (r && E.isLegalFollow(hand, lead0, r, trump, null)) return r;
   }
   if (!best || !E.isLegalFollow(hand, lead0, best, trump, null)) {
     best = M.forceLegalFollow(hand, lead0, trump, null);
@@ -603,11 +628,14 @@ function lostPotential(a, c, trump, suitLen) {
   if (suitLen >= 5) v += 1.5;
   return v;
 }
+function lostPotential2(a, c, trump, suitLen, cfg) {
+  return lostPotential(a, c, trump, suitLen) + cfg.discOrdW * E.ordIdx(c, trump);
+}
 
 function discardV2(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   const groups = M.bySuit(hand, trump);
   const nTrump = groups.T.length;
   const sideSuits = [];
@@ -624,7 +652,7 @@ function discardV2(cfg, view) {
     const c = hand[i];
     const es = E.effSuit(c, trump);
     const len = es === 'T' ? nTrump : groups[es].length;
-    let v = lostPotential(a, c, trump, len) * cfg.discLostW;
+    let v = lostPotential2(a, c, trump, len, cfg) * cfg.discLostW;
     /* 分牌:扣掉的代价 = 抠底期望损失;留着的代价 = 被吃走的概率 */
     const p = E.cardPoints(c);
     if (p > 0) v += p * cfg.discPtCost - p * cfg.discKeepPtSafe;
@@ -1122,16 +1150,28 @@ function lastTrickSwing(cfg, view, L, pWin) {
 
 
 /* 出掉这一手之后,手牌结构受了多少损伤 */
-function structCost(cfg, a, view, cd, trump) {
+/* 每次决策只算一次的手牌摘要 */
+function handSummary(view, trump) {
+  const hand = view.hand;
+  const inHand = new Map();
+  const suitCnt = {};
+  let nTrump = 0;
+  for (let i = 0; i < hand.length; i++) {
+    const k = hand[i].suit + '/' + hand[i].rank;
+    inHand.set(k, (inHand.get(k) || 0) + 1);
+    const es = E.effSuit(hand[i], trump);
+    if (es === 'T') nTrump++; else suitCnt[es] = (suitCnt[es] || 0) + 1;
+  }
+  return { inHand: inHand, suitCnt: suitCnt, nTrump: nTrump };
+}
+
+function structCost(cfg, a, view, cd, trump, hsum) {
   if (!cfg.breakPairW && !cfg.voidGainW) return 0;
   const hand = view.hand;
   let cost = 0;
   if (cfg.breakPairW) {
-    const inHand = new Map(), inPlay = new Map();
-    for (let i = 0; i < hand.length; i++) {
-      const k = hand[i].suit + '/' + hand[i].rank;
-      inHand.set(k, (inHand.get(k) || 0) + 1);
-    }
+    const inHand = hsum ? hsum.inHand : handSummary(view, trump).inHand;
+    const inPlay = new Map();
     for (let i = 0; i < cd.length; i++) {
       const k = cd[i].suit + '/' + cd[i].rank;
       inPlay.set(k, (inPlay.get(k) || 0) + 1);
@@ -1160,14 +1200,10 @@ function structCost(cfg, a, view, cd, trump) {
     }
   }
   if (cfg.voidGainW) {
-    let nTrump = 0;
-    for (let i = 0; i < hand.length; i++) if (E.effSuit(hand[i], trump) === 'T') nTrump++;
+    const hs2 = hsum || handSummary(view, trump);
+    const nTrump = hs2.nTrump;
     if (nTrump >= 3) {
-      const cnt = {};
-      for (let i = 0; i < hand.length; i++) {
-        const es = E.effSuit(hand[i], trump);
-        if (es !== 'T') cnt[es] = (cnt[es] || 0) + 1;
-      }
+      const cnt = hs2.suitCnt;
       const rem = {};
       for (let i = 0; i < cd.length; i++) {
         const es = E.effSuit(cd[i], trump);
@@ -1179,13 +1215,211 @@ function structCost(cfg, a, view, cd, trump) {
   return cost;
 }
 
+
+/* ---------------- 残局采样走子(rollout) ---------------- */
+
+function rngFrom(seed) {
+  let a = seed | 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* 采 K 个与「各家剩几张 + 已知断门」一致的世界(我的手牌是真的,其余是采样的) */
+function sampleWorlds(a, view, cfg) {
+  const trump = a.trump, me = view.seat;
+  const pool = [];
+  let fake = 1000;
+  for (let si = 0; si < 5; si++) {
+    const suit = si === 4 ? 'X' : ALLSUITS[si];
+    const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
+    for (let r = lo; r <= hi; r++) {
+      for (let q = 0; q < a.unseen[si * 17 + r]; q++) pool.push({ suit: suit, rank: r, id: fake++ });
+    }
+  }
+  const seats = [];
+  for (let p = 0; p < 4; p++) if (p !== me) seats.push(p);
+  const caps0 = [];
+  for (let i = 0; i < seats.length; i++) caps0.push(Math.max(0, a.hsize[seats[i]]));
+  caps0.push(Math.max(0, a.kittyUnknown));
+  const H = caps0.length;
+  const allow = [];
+  for (let i = 0; i < pool.length; i++) {
+    const es = E.effSuit(pool[i], trump);
+    const l = [];
+    for (let h = 0; h < H; h++) { if (h < seats.length && a.voids[seats[h]][es]) continue; l.push(h); }
+    allow.push(l.length ? l : [H - 1]);
+  }
+  const order = [];
+  for (let i = 0; i < pool.length; i++) order.push(i);
+  order.sort(function (x, y) { return allow[x].length - allow[y].length; });
+  let seed = view.history.length * 7919 + me * 131 + view.hand.length * 31;
+  for (let i = 0; i < view.hand.length; i++) seed = (seed * 33 + view.hand[i].id) | 0;
+  const rng = rngFrom(seed);
+  const out = [];
+  for (let k = 0; k < cfg.rolloutK; k++) {
+    const caps = caps0.slice();
+    const buckets = [];
+    for (let h = 0; h < H; h++) buckets.push([]);
+    for (let i = order.length - 1; i > 0; i--) {
+      if (allow[order[i]].length !== allow[order[i - 1]].length) continue;
+      const j = rng() < 0.5 ? i - 1 : i;
+      const t = order[i]; order[i] = order[j]; order[j] = t;
+    }
+    for (let oi = 0; oi < order.length; oi++) {
+      const ci = order[oi], l = allow[ci];
+      let tot = 0;
+      for (let i = 0; i < l.length; i++) tot += caps[l[i]];
+      let pick = -1;
+      if (tot > 0) {
+        let r = rng() * tot;
+        for (let i = 0; i < l.length; i++) { r -= caps[l[i]]; if (r <= 0) { pick = l[i]; break; } }
+        if (pick < 0) pick = l[l.length - 1];
+      } else {
+        for (let h = 0; h < H; h++) if (caps[h] > 0) { pick = h; break; }
+        if (pick < 0) pick = H - 1;
+      }
+      caps[pick]--;
+      buckets[pick].push(pool[ci]);
+    }
+    const hands = [null, null, null, null];
+    hands[me] = view.hand;
+    for (let i = 0; i < seats.length; i++) hands[seats[i]] = buckets[i];
+    out.push(hands);
+  }
+  return out;
+}
+
+function dropIds(hand, idset) {
+  const out = [];
+  for (let i = 0; i < hand.length; i++) if (!idset.has(hand[i].id)) out.push(hand[i]);
+  return out;
+}
+
+/* 走子策略:能赢且值钱就赢,队友赢就送分,否则出最废的 */
+function quickMove(hands, seat, trump, plays, leadCl) {
+  if (!leadCl) {
+    const opts = M.quickLeadOptions(hands[seat], trump);
+    let best = null, bv = -1e9;
+    for (let i = 0; i < opts.length; i++) {
+      const cd = opts[i];
+      const cl = E.classify(cd, trump);
+      if (!cl) continue;
+      let v = cl.top + cd.length * 2 - E.countPoints(cd) * 0.8 - (cl.suit === 'T' ? 3 : 0);
+      if (v > bv) { bv = v; best = cd; }
+    }
+    return best || M.forceLegalLead(hands[seat], trump);
+  }
+  const opts = M.quickFollowOptions(hands[seat], leadCl, trump);
+  let pts = 0;
+  for (let i = 0; i < plays.length; i++) pts += E.countPoints(plays[i].cards);
+  const lsig = E.sigOf(leadCl);
+  let pBest = leadCl, pWin = plays[0].seat;
+  for (let i = 1; i < plays.length; i++) {
+    const cl = E.classify(plays[i].cards, trump);
+    if (!cl || E.sigOf(cl) !== lsig) continue;
+    if (cl.suit === pBest.suit) { if (cl.top > pBest.top) { pBest = cl; pWin = plays[i].seat; } }
+    else if (cl.suit === 'T') { pBest = cl; pWin = plays[i].seat; }
+  }
+  let best = null, bv = -1e9;
+  for (let i = 0; i < opts.length; i++) {
+    const cd = opts[i];
+    const mc = E.classify(cd, trump);
+    let take = false;
+    if (mc && E.sigOf(mc) === lsig) {
+      if (mc.suit === pBest.suit) take = mc.top > pBest.top;
+      else if (mc.suit === 'T') take = true;
+    }
+    const mine = ((take ? seat : pWin) % 2) === (seat % 2);
+    let v = mine ? 40 + (pts + E.countPoints(cd)) * 2 : -E.countPoints(cd) * 3;
+    for (let j = 0; j < cd.length; j++) {
+      v -= E.ordIdx(cd[j], trump) * 0.3 + (E.effSuit(cd[j], trump) === 'T' ? 2 : 0);
+    }
+    if (v > bv) { bv = v; best = cd; }
+  }
+  return best || M.forceLegalFollow(hands[seat], leadCl, trump, null);
+}
+
+/* 从当前局面走到这一局结束,返回「对我方的净分」 */
+function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam) {
+  const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
+  const teamPts = [0, 0];
+  let cur = plays0.slice();
+  let lead = E.classify(cur[0].cards, trump);
+  let ldr = leader;
+  let lastWinner = -1, lastSize = 1, guard = 0;
+  for (; guard < 30; guard++) {
+    while (cur.length < 4) {
+      const seat = (ldr + cur.length) % 4;
+      const cd = quickMove(H, seat, trump, cur, lead);
+      const ids = new Set();
+      for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
+      H[seat] = dropIds(H[seat], ids);
+      cur.push({ seat: seat, cards: cd });
+    }
+    const r = E.resolveTrick(cur, trump);
+    teamPts[r.winner % 2] += r.points;
+    lastWinner = r.winner; lastSize = lead.cards.length;
+    ldr = r.winner;
+    if (H[ldr].length === 0) break;
+    const lc = quickMove(H, ldr, trump, [], null);
+    const ids2 = new Set();
+    for (let i = 0; i < lc.length; i++) ids2.add(lc[i].id);
+    H[ldr] = dropIds(H[ldr], ids2);
+    lead = E.classify(lc, trump);
+    cur = [{ seat: ldr, cards: lc }];
+  }
+  const defTeam = 1 - declTeam;
+  let def = teamPts[defTeam];
+  if ((lastWinner % 2) === defTeam) def += kittyPts * 2 * lastSize;
+  return (myTeam === defTeam) ? def : -def;
+}
+
+/* 对静态分最高的几个候选做采样走子,返回胜出的那一个 */
+function rolloutPick(cfg, a, view, scored, plays, leadCl) {
+  if (scored.length < 2) return scored.length ? scored[0].cd : null;
+  scored.sort(function (x, y) { return y.sc - x.sc; });
+  let m = Math.min(cfg.rolloutM, scored.length);
+  if (cfg.rolloutMargin > 0) {
+    const top = scored[0].sc;
+    let n = 1;
+    while (n < m && top - scored[n].sc <= cfg.rolloutMargin) n++;
+    if (n < 2) return scored[0].cd;          // 静态分遥遥领先,不必精算
+    m = n;
+  }
+  const worlds = sampleWorlds(a, view, cfg);
+  const trump = a.trump;
+  const declTeam = view.declSeat % 2;
+  const kp = (view.buriedKnown && view.buriedKnown.length)
+    ? E.countPoints(view.buriedKnown) : cfg.rolloutKittyPrior;
+  let best = scored[0].cd, bv = -1e9;
+  for (let i = 0; i < m; i++) {
+    const cd = scored[i].cd;
+    const ids = new Set();
+    for (let j = 0; j < cd.length; j++) ids.add(cd[j].id);
+    let tot = 0;
+    for (let w = 0; w < worlds.length; w++) {
+      const hands = worlds[w].slice();
+      hands[view.seat] = dropIds(hands[view.seat], ids);
+      const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
+      const ldr = plays ? plays[0].seat : view.seat;
+      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam);
+    }
+    if (tot > bv) { bv = tot; best = cd; }
+  }
+  return best;
+}
+
 /* ---------------- evalV2:领出 ---------------- */
 
 function leadV2(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
   if (cfg.mcModel || cfg.__probe) cfg.__view = view;
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   const H = hand.length;
   const hidden = a.hiddenTotal;
   const opps = [(view.seat + 1) % 4, (view.seat + 3) % 4];
@@ -1196,6 +1430,7 @@ function leadV2(cfg, view) {
   const trumpLeft = unseenInSuit(a, 'T', trump);
 
   const PS = ptsScale(a, view, cfg);
+  const HSUM = handSummary(view, trump);
   let cands = M.genLeadCandidates(hand, trump);
   const thr = M.genThrowCandidates(hand, trump, 30);
   for (let i = 0; i < thr.length; i++) cands.push(thr[i]);
@@ -1221,6 +1456,8 @@ function leadV2(cfg, view) {
   }
 
   let best = null, bestScore = -1e9;
+  const useRoll = cfg.rollout && hand.length <= cfg.rolloutMaxCards;
+  const scored = useRoll ? [] : null;
   const seen = new Set();
   for (let i = 0; i < cands.length; i++) {
     const cd = cands[i];
@@ -1266,7 +1503,7 @@ function leadV2(cfg, view) {
     for (let j = 0; j < L; j++) spent += cardValue(a, cd[j], trump, cfg);
     sc -= (1 - pWin) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
-    sc -= structCost(cfg, a, view, cd, trump);
+    sc -= structCost(cfg, a, view, cd, trump, HSUM);
     if (cfg.ptsUrgencyLead && myPts > 0) {
       const urg = 1 - hand.length / 25;
       sc += (1 - pWin) * myPts * cfg.ptsUrgencyLead * urg;
@@ -1289,7 +1526,12 @@ function leadV2(cfg, view) {
         sc += b;
       }
     }
+    if (useRoll) scored.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
+  }
+  if (useRoll && scored.length > 1) {
+    const r = rolloutPick(cfg, a, view, scored, null, null);
+    if (r) return r;
   }
   if (!best) best = M.forceLegalLead(hand, trump);
   return best;
@@ -1303,7 +1545,7 @@ function followV2(cfg, view, plays) {
   if (cfg.mcModel || cfg.__probe) cfg.__view = view;
   const lead0 = E.classify(plays[0].cards, trump);
   if (!lead0) return M.forceLegalFollow(hand, { cards: plays[0].cards, suit: 'T', type: 'single' }, trump, null);
-  const a = analyze(view);
+  const a = analyze(view, cfg.__cache); cfg.__cache = a.cache;
   const H = hand.length;
   const hidden = a.hiddenTotal;
   const L = lead0.cards.length;
@@ -1320,18 +1562,36 @@ function followV2(cfg, view, plays) {
     (plays[1] ? E.countPoints(plays[1].cards) : 0) +
     (plays[2] ? E.countPoints(plays[2].cards) : 0);
   const PS = ptsScale(a, view, cfg);
+  const HSUM = handSummary(view, trump);
+  /* 先把已出的几手定型,循环里只 classify 我自己的候选 */
+  const leadSig = E.sigOf(lead0);
+  let preBest = lead0, preWinIdx = 0, prePts = E.countPoints(plays[0].cards);
+  for (let i = 1; i < plays.length; i++) {
+    prePts += E.countPoints(plays[i].cards);
+    const cl = E.classify(plays[i].cards, trump);
+    if (!cl || E.sigOf(cl) !== leadSig) continue;
+    if (cl.suit === preBest.suit) { if (cl.top > preBest.top) { preBest = cl; preWinIdx = i; } }
+    else if (cl.suit === 'T') { preBest = cl; preWinIdx = i; }
+  }
   const isDecl2 = view.myTeam === (view.declSeat % 2);
   const LOSSW = (isDecl2 ? cfg.declLossW : cfg.defLossW) || cfg.lossW;
   const TEMPOW = (isDecl2 ? cfg.declTempoW : cfg.defTempoW) || cfg.tempoW;
 
   let best = null, bestScore = -1e9;
+  const useRoll = cfg.rollout && hand.length <= cfg.rolloutMaxCards && cands.length > 1;
+  const scored = useRoll ? [] : null;
   for (let i = 0; i < cands.length; i++) {
     const cd = cands[i];
-    const test = plays.concat([{ seat: view.seat, cards: cd }]);
-    const r = E.resolveTrick(test, trump);
+    const myCl = E.classify(cd, trump);
+    let iTake = false;
+    if (myCl && E.sigOf(myCl) === leadSig) {
+      if (myCl.suit === preBest.suit) iTake = myCl.top > preBest.top;
+      else if (myCl.suit === 'T') iTake = true;
+    }
+    const winCl = iTake ? myCl : preBest;
+    const winner = iTake ? view.seat : plays[preWinIdx].seat;
     const myPts = E.countPoints(cd);
-    const winCl = E.classify(test[r.winIdx].cards, trump);
-    const mineWins = (r.winner % 2) === view.myTeam;
+    const mineWins = (winner % 2) === view.myTeam;
 
     /* 我方现在领先 → 还能不能守住;对方领先 → 队友还能不能翻回来 */
     let pTeam;
@@ -1374,13 +1634,18 @@ function followV2(cfg, view, plays) {
     for (let j = 0; j < cd.length; j++) spent += cardValue(a, cd[j], trump, cfg);
     sc -= (1 - pTeam) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
-    sc -= structCost(cfg, a, view, cd, trump);
+    sc -= structCost(cfg, a, view, cd, trump, HSUM);
     if (cfg.ptsUrgency && myPts > 0) {
       const urg = 1 - hand.length / 25;
       sc += (1 - pTeam) * myPts * cfg.ptsUrgency * urg;
     }
 
+    if (useRoll) scored.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
+  }
+  if (useRoll && scored.length > 1) {
+    const r = rolloutPick(cfg, a, view, scored, plays, lead0);
+    if (r && E.isLegalFollow(hand, lead0, r, trump, null)) return r;
   }
   if (!best || !E.isLegalFollow(hand, lead0, best, trump, null)) {
     best = M.forceLegalFollow(hand, lead0, trump, null);
