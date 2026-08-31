@@ -27,6 +27,10 @@ const DEFAULTS = {
   buryPointPenalty: 14,
   buryMaxVoidPoints: 10,
   buryKeepTrump: true,
+  /* 注:这个开关实测是**死的** —— 15 / 25 / 40 / 60 四个值行为差异都是 0%。
+   * 33 张里至少有 18 张非主牌,非主废牌的 buryScore 恒高于任何主牌,
+   * 所以「不扣主」是被牌数结构逼出来的,不是这个权重在起作用。 */
+  buryTrumpPenalty: 40,
   /* 出牌 */
   drawTrumpBonus: 12,
   sureWinBonus: 30,
@@ -68,13 +72,15 @@ const DEFAULTS = {
   cvRuffAware: 0.8,
   /* --- 残局采样走子:对静态分最高的几个候选,采样若干个一致的世界走到底再比 --- */
   rollout: true,
-  rolloutMaxCards: 5,        // 手牌 ≤ 这个数才开
+  rolloutMaxCards: 4,        // 手牌 ≤ 这个数才开(跟牌)。5 更强 +0.011,但要多花 10µs,见 PROGRESS
+  rolloutMaxCardsLead: 0,    // 领出单独的深度(0 = 跟 rolloutMaxCards 一样)
   rolloutK: 6,              // 采样几个世界
   rolloutM: 4,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
   rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
+  rolloutRichLead: false,    // 走子的领出候选补上「每门最小的一张」
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -461,7 +467,7 @@ function discard(cfg, view) {
   function buryScore(c, suitLen) {
     const es = E.effSuit(c, trump);
     let s = 20 - E.ordIdx(c, trump) * 1.2;
-    if (es === 'T') s -= 40;                                  // 主牌尽量不扣
+    if (es === 'T') s -= cfg.buryTrumpPenalty;                // 主牌尽量不扣
     s -= E.cardPoints(c) * cfg.buryPointPenalty / 10;
     if (beatersLeft(a, c, trump) === 0) s -= 25;               // 光牌不扣
     return s;
@@ -1328,9 +1334,9 @@ function dropIds(hand, idset) {
 }
 
 /* 走子策略:能赢且值钱就赢,队友赢就送分,否则出最废的 */
-function quickMove(hands, seat, trump, plays, leadCl, smart) {
+function quickMove(hands, seat, trump, plays, leadCl, smart, rich) {
   if (!leadCl) {
-    const opts = M.quickLeadOptions(hands[seat], trump);
+    const opts = M.quickLeadOptions(hands[seat], trump, rich);
     let best = null, bv = -1e9;
     for (let i = 0; i < opts.length; i++) {
       const cd = opts[i];
@@ -1407,7 +1413,7 @@ function quickMove(hands, seat, trump, plays, leadCl, smart) {
 }
 
 /* 从当前局面走到这一局结束,返回「对我方的净分」 */
-function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam, smart) {
+function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam, smart, rich) {
   const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
   const teamPts = [0, 0];
   let cur = plays0.slice();
@@ -1417,7 +1423,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
   for (; guard < 30; guard++) {
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
-      const cd = quickMove(H, seat, trump, cur, lead, smart);
+      const cd = quickMove(H, seat, trump, cur, lead, smart, rich);
       const ids = new Set();
       for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
       H[seat] = dropIds(H[seat], ids);
@@ -1428,7 +1434,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
     lastWinner = r.winner; lastSize = lead.cards.length;
     ldr = r.winner;
     if (H[ldr].length === 0) break;
-    const lc = quickMove(H, ldr, trump, [], null, smart);
+    const lc = quickMove(H, ldr, trump, [], null, smart, rich);
     const ids2 = new Set();
     for (let i = 0; i < lc.length; i++) ids2.add(lc[i].id);
     H[ldr] = dropIds(H[ldr], ids2);
@@ -1470,7 +1476,7 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
       const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
       const ldr = plays ? plays[0].seat : view.seat;
       tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam,
-        cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0));
+        cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0), cfg.rolloutRichLead);
     }
     if (tot > bv) { bv = tot; best = cd; }
   }
@@ -1520,7 +1526,7 @@ function leadV2(cfg, view) {
   }
 
   let best = null, bestScore = -1e9;
-  const useRoll = cfg.rollout && hand.length <= cfg.rolloutMaxCards;
+  const useRoll = cfg.rollout && hand.length <= (cfg.rolloutMaxCardsLead || cfg.rolloutMaxCards);
   const scored = useRoll ? [] : null;
   const seen = new Set();
   for (let i = 0; i < cands.length; i++) {

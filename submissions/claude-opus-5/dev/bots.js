@@ -191,4 +191,21 @@ function siblingR() {
   });
 }
 
-module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling, siblingR };
+/* 专门制造无主局:有王对就反成无主;没有就不亮,逼出「无人亮主 → 无主局」 */
+function ntForcer() {
+  const g = greedy();
+  return {
+    name: 'ntForcer',
+    onDeal(v) {
+      let sj = 0, bj = 0;
+      for (const c of v.hand) if (c.suit === 'X') { if (c.rank === 15) sj++; else bj++; }
+      const st = bj >= 2 ? 4 : (sj >= 2 ? 3 : 0);
+      if (!st) return null;
+      if (v.curDecl && (v.curDecl.seat === v.seat || st <= v.curDecl.strength)) return null;
+      return { suit: null, strength: st };
+    },
+    onRebel: g.onRebel, discard: g.discard, lead: g.lead, follow: g.follow,
+  };
+}
+
+module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling, siblingR, ntForcer };

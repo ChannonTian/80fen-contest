@@ -149,6 +149,7 @@ function playRound(cfg) {
     }
 
     /* ③ 定主定庄 */
+    if (cfg.forceNoTrump) curDecl = null;      // 开发期:强制无主局,专门练这条路径
     declSeat = dealerKnown ? dealer : (curDecl ? curDecl.seat : firstTaker);
     trumpRank = dealerKnown ? levels[dealer % 2]
       : (curDecl ? levels[curDecl.seat % 2] : levels[firstTaker % 2]);

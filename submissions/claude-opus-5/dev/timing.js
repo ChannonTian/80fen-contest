@@ -3,7 +3,7 @@
 const G = require('./game.js'); const A = require('./arena.js');
 const B = require('./bots.js'); const S = require('../strategy.js');
 const { mcpvbot } = require('./mcpv.js');
-const N = 120;
+const N = parseInt(process.argv[2] || '120', 10);
 function timeBot(name, f) {
   let calls = 0, ns = 0;
   const wrap = () => {
@@ -20,6 +20,9 @@ function timeBot(name, f) {
     }
     return w;
   };
+  /* 先跑几局热身让 JIT 稳定,再计时 */
+  for (let d = 0; d < 15; d++) A.runOne(wrap, () => S.makeAI(), 900 + d, 1, true);
+  calls = 0; ns = 0;
   for (let d = 0; d < N; d++) { A.runOne(wrap, () => S.makeAI(), d, 1, true); }
   return { name, calls, us: ns / 1000 / calls, totalMs: ns / 1e6 };
 }
@@ -27,8 +30,9 @@ const rows = [
   timeBot('template', B.template), timeBot('naive', B.naive), timeBot('greedy', B.greedy),
   timeBot('pointHog', B.pointHog),
   timeBot('本AI(当前,<=3)', () => S.makeAI()),
-  timeBot('fill20', () => S.makeAI({ fillCap: 20 })),
-  timeBot('fill20 cap100', () => S.makeAI({ fillCap: 20, followCap: 100 })),
+  timeBot('roll<=4', () => S.makeAI({ rolloutMaxCards: 4 })),
+  timeBot('roll<=3', () => S.makeAI({ rolloutMaxCards: 3 })),
+  timeBot('cap60fill12 无roll', () => S.makeAI({ rollout: false, followCap: 60, fillCap: 12 })),
   timeBot('无rollout', () => S.makeAI({ rollout: false })),
 ];
 const base = rows.find(r => r.name === 'greedy').us;

@@ -29,7 +29,7 @@ function valueTo(res, team) {
   return { lvl: lvl, np: np, stage: onStage, total: res.sc.total, declTeam: res.declTeam };
 }
 
-function runOne(fa, fb, d, seed, aOnTeam0) {
+function runOne(fa, fb, d, seed, aOnTeam0, opts) {
   const st = setupFor(d);
   const bots = [];
   for (let s = 0; s < 4; s++) {
@@ -40,6 +40,7 @@ function runOne(fa, fb, d, seed, aOnTeam0) {
     bots: bots, seed: seed, roundIdx: d, levels: st.levels, played: st.played,
     dealerKnown: st.dealerKnown, dealer: st.dealer, firstTaker: st.firstTaker,
     needCut: st.needCut, cutBase: st.cutBase, rebelMode: st.rebelMode,
+    forceNoTrump: opts && opts.forceNoTrump,
   });
   return res;
 }
@@ -59,8 +60,8 @@ function roundArena(fa, fb, nDeals, seed, opts) {
   let differed = 0, penA = 0, penB = 0, violA = 0, violB = 0;
   const lossA = {}, lossB = {};
   for (let d = 0; d < nDeals; d++) {
-    const r1 = runOne(fa, fb, d, base, true);     // A 在 team0
-    const r2 = runOne(fa, fb, d, base, false);    // A 在 team1
+    const r1 = runOne(fa, fb, d, base, true, opts);     // A 在 team0
+    const r2 = runOne(fa, fb, d, base, false, opts);    // A 在 team1
     const v1 = valueTo(r1, 0), v2 = valueTo(r2, 1);
     lvlD.push((v1.lvl + v2.lvl) / 2);
     npD.push((v1.np + v2.np) / 2);

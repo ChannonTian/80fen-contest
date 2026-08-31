@@ -450,8 +450,9 @@ function quickFollowOptions(hand, lead, trump) {
   return out;
 }
 
-/* 领出:每一门的最大组件 + 全局最废的一张 */
-function quickLeadOptions(hand, trump) {
+/* 领出:每一门的最大组件 + 全局最废的一张。
+ * rich=true 时再补上「每一门最小的一张」—— 走子里想留主牌、只丢某一门的小牌时用得上。 */
+function quickLeadOptions(hand, trump, rich) {
   const g = bySuit(hand, trump);
   const keys = ['T', 'S', 'H', 'D', 'C'];
   const out = [];
@@ -460,7 +461,7 @@ function quickLeadOptions(hand, trump) {
     const cs = g[keys[ki]];
     if (!cs.length) continue;
     const comps = E.decompose(cs, trump);
-    let big = null, bo = -1;
+    let big = null, bo = -1, small = null, so = 1e9;
     for (let i = 0; i < comps.length; i++) {
       if (comps[i].top > bo) { bo = comps[i].top; big = comps[i]; }
     }
@@ -468,7 +469,10 @@ function quickLeadOptions(hand, trump) {
     for (let i = 0; i < cs.length; i++) {
       const v = junkScore(cs[i], trump);
       if (v < jv) { jv = v; junk = cs[i]; }
+      const o = E.ordIdx(cs[i], trump);
+      if (o < so) { so = o; small = cs[i]; }
     }
+    if (rich && small && (!big || big.cards.length !== 1 || big.cards[0].id !== small.id)) out.push([small]);
   }
   if (junk) out.push([junk]);
   return out.length ? out : [[hand[0]]];
