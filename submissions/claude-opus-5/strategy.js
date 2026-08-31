@@ -51,6 +51,21 @@ const DEFAULTS = {
   declLossW: 0, defLossW: 0,          // 0 = 沿用 lossW
   declTempoW: 0, defTempoW: 0,        // 0 = 沿用 tempoW
   mateLaterFactor: 0.9,               // 队友翻回来之后还要顶住后面对手的折扣
+  /* --- 动态先手价值:手上没赢张的时候,拿到领出权反而是负担 --- */
+  dynTempo: false,
+  dynTempoFloor: -0.5,       // 出完之后一张赢张都没有时,先手价值的倍率
+  dynTempoFull: 2,           // 有几张赢张就算「先手值钱」
+  /* --- 分牌的时间价值:留到最后的分牌基本上都会被逼出来送给对方,
+   *     所以越到后面,把分垫掉的代价越小 --- */
+  ptsUrgency: 0,
+  ptsUrgencyLead: 0,
+  /* --- 抽主只有在「这一墩还赢得下来」时才算数;甩牌同理(甩牌校验只看本门,
+   *     不看谁能毙,所以「安全甩牌」照样可能被主牌敲掉) --- */
+  drawTrumpNeedsWin: false,
+  drawTrumpPerCard: 0,       // 抽主奖励按张数放大(一次抽走对手更多主牌)
+  throwNeedsWin: false,
+  /* --- cardValue 的「光牌」价值要打毙牌折扣:副门 A 在大家都断门之后不值钱 --- */
+  cvRuffAware: 0.8,
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -226,12 +241,29 @@ function unseenInSuit(a, es, trump) {
 }
 
 /* 留牌价值:越高越舍不得出 */
+/* 这一门还「活着」的程度:外面这门的牌越少,越可能被人断门毙掉 */
+function suitAlive(a, es, trump) {
+  if (es === 'T') return 1;
+  if (!a.aliveCache) a.aliveCache = {};
+  if (a.aliveCache[es] !== undefined) return a.aliveCache[es];
+  const nS = unseenInSuit(a, es, trump);
+  /* 三家平分:每家期望 nS/3.4 张,一张都没有的概率越高,这门越危险 */
+  const perHand = nS / 3.4;
+  const v = 1 - Math.exp(-perHand * 0.9);
+  a.aliveCache[es] = v;
+  return v;
+}
+
 function cardValue(a, c, trump, cfg) {
   const es = E.effSuit(c, trump);
   const oi = E.ordIdx(c, trump);
   const b = beatersLeft(a, c, trump);
   const k = cfg || DEFAULTS;
   let v = b === 0 ? k.cvSure : (b <= 2 ? k.cvNear : Math.max(0, k.cvFar - b * k.cvFarSlope));
+  if (k.cvRuffAware && es !== 'T' && b <= 2) {
+    const al = suitAlive(a, es, trump);
+    v *= (1 - k.cvRuffAware) + k.cvRuffAware * al;
+  }
   if (es === 'T') v += k.cvTrumpBase + oi * k.cvTrumpOrd;
   else v += oi * k.cvOrd;
   v += E.cardPoints(c) * k.cvPts;
@@ -1053,6 +1085,29 @@ function ptsScale(a, view, cfg) {
 }
 
 
+
+/* 出完 cd 之后,我手上还剩几个「打得出去的赢张」。
+ * 一张不剩 = 拿到先手只能往对手枪口上撞。 */
+function tempoFactor(cfg, a, view, cd, trump) {
+  if (!cfg.dynTempo) return 1;
+  const ids = new Set();
+  for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
+  const rest = [];
+  for (let i = 0; i < view.hand.length; i++) if (!ids.has(view.hand[i].id)) rest.push(view.hand[i]);
+  if (rest.length === 0) return 1;
+  let nWin = 0;
+  const g = M.bySuit(rest, trump);
+  const keys = ['T', 'S', 'H', 'D', 'C'];
+  for (let ki = 0; ki < keys.length && nWin < cfg.dynTempoFull; ki++) {
+    const cs = g[keys[ki]];
+    for (let i = 0; i < cs.length && nWin < cfg.dynTempoFull; i++) {
+      if (beatersLeft(a, cs[i], trump) === 0) nWin++;
+    }
+  }
+  if (nWin === 0) return cfg.dynTempoFloor;
+  return Math.min(1, nWin / cfg.dynTempoFull);
+}
+
 /* 末墩的抠底摆动:对「我方」的价值(闲家赢末墩才有,倍数跟末墩张数走) */
 function lastTrickSwing(cfg, view, L, pWin) {
   if (!cfg.lastTrickAware) return 0;
@@ -1129,7 +1184,7 @@ function structCost(cfg, a, view, cd, trump) {
 function leadV2(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
-  cfg.__view = view;
+  if (cfg.mcModel || cfg.__probe) cfg.__view = view;
   const a = analyze(view);
   const H = hand.length;
   const hidden = a.hiddenTotal;
@@ -1204,7 +1259,7 @@ function leadV2(cfg, view) {
     const evWin = myPts + L * cfg.leadWinPts;
     const evLose = myPts + L * cfg.leadLosePts;
     let sc = (pWin * evWin - (1 - pWin) * evLose) * PS;
-    sc += pWin * TEMPOW;
+    sc += pWin * TEMPOW * tempoFactor(cfg, a, view, cd, trump);
     sc += lastTrickSwing(cfg, view, L, pWin);
 
     let spent = 0;
@@ -1212,8 +1267,12 @@ function leadV2(cfg, view) {
     sc -= (1 - pWin) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);
+    if (cfg.ptsUrgencyLead && myPts > 0) {
+      const urg = 1 - hand.length / 25;
+      sc += (1 - pWin) * myPts * cfg.ptsUrgencyLead * urg;
+    }
 
-    if (cl.type === 'throw') sc += cfg.throwBonus;
+    if (cl.type === 'throw') sc += cfg.throwBonus * (cfg.throwNeedsWin ? pWin : 1);
     if (cfg.longSuitW && cl.suit !== 'T') {
       /* 本门我有 m 张、外面还有 u 张:外面出完之后我的小牌都变成赢张 */
       let m = 0;
@@ -1224,7 +1283,10 @@ function leadV2(cfg, view) {
     }
     if (cl.suit === 'T') {
       if (isDecl && trumpLeft > 0 && myTrumps >= 6) {
-        sc += cfg.drawTrumpW * Math.min(1, myTrumps / 10) * Math.min(1, trumpLeft / 8);
+        let b = cfg.drawTrumpW * Math.min(1, myTrumps / 10) * Math.min(1, trumpLeft / 8);
+        if (cfg.drawTrumpNeedsWin) b *= pWin;
+        if (cfg.drawTrumpPerCard) b *= (1 + cfg.drawTrumpPerCard * (L - 1));
+        sc += b;
       }
     }
     if (sc > bestScore) { bestScore = sc; best = cd; }
@@ -1238,7 +1300,7 @@ function leadV2(cfg, view) {
 function followV2(cfg, view, plays) {
   const trump = view.trump;
   const hand = view.hand;
-  cfg.__view = view;
+  if (cfg.mcModel || cfg.__probe) cfg.__view = view;
   const lead0 = E.classify(plays[0].cards, trump);
   if (!lead0) return M.forceLegalFollow(hand, { cards: plays[0].cards, suit: 'T', type: 'single' }, trump, null);
   const a = analyze(view);
@@ -1305,7 +1367,7 @@ function followV2(cfg, view, plays) {
       const total = ptsOnTable + myPts + expLater;
       sc = (2 * pTeam - 1) * total * PS;
     }
-    sc += pTeam * TEMPOW * 0.5;
+    sc += pTeam * TEMPOW * 0.5 * tempoFactor(cfg, a, view, cd, trump);
     sc += lastTrickSwing(cfg, view, L, pTeam);
 
     let spent = 0;
@@ -1313,6 +1375,10 @@ function followV2(cfg, view, plays) {
     sc -= (1 - pTeam) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);
+    if (cfg.ptsUrgency && myPts > 0) {
+      const urg = 1 - hand.length / 25;
+      sc += (1 - pTeam) * myPts * cfg.ptsUrgency * urg;
+    }
 
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
