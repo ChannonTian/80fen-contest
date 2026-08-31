@@ -77,6 +77,15 @@ const DEFAULTS = {
   rolloutK: 6,              // 采样几个世界
   rolloutM: 4,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
+  /* --- 中前期领出的截断前瞻:手牌还多的时候走不到底,就只往前推固定几墩,
+   *     再用「剩下的牌值多少」当终局评价。代价与手牌张数无关。 --- */
+  midLook: true,
+  midTricks: 1,              // 往前推几墩
+  midK: 3,                   // 采样几个世界
+  midM: 3,                   // 精算静态分最高的几个候选
+  midTermW: 1.0,             // 终局手牌强度差的权重
+  midMinCards: 6,            // 手牌少于这个数就交给残局 rollout
+  midMaxCards: 99,           // 手牌多于这个数就不前瞻(牌太多时既贵又不准)
   rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
@@ -572,10 +581,15 @@ function lead(cfg, view) {
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
     if (useRoll) scored.push({ cd: cd, sc: sc });
+    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
   if (useRoll && scored.length > 1) {
     const r = rolloutPick(cfg, a, view, scored, null, null);
+    if (r) return r;
+  }
+  if (useMid && scoredMid.length > 1) {
+    const r = midLookPick(cfg, a, view, scoredMid);
     if (r) return r;
   }
   if (!best) best = M.forceLegalLead(hand, trump);
@@ -636,6 +650,7 @@ function follow(cfg, view, plays) {
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
     if (useRoll) scored.push({ cd: cd, sc: sc });
+    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
   if (useRoll && scored.length > 1) {
@@ -1263,7 +1278,7 @@ function rngFrom(seed) {
 }
 
 /* 采 K 个与「各家剩几张 + 已知断门」一致的世界(我的手牌是真的,其余是采样的) */
-function sampleWorlds(a, view, cfg) {
+function sampleWorlds(a, view, cfg, kOverride) {
   const trump = a.trump, me = view.seat;
   const pool = [];
   let fake = 1000;
@@ -1294,7 +1309,8 @@ function sampleWorlds(a, view, cfg) {
   for (let i = 0; i < view.hand.length; i++) seed = (seed * 33 + view.hand[i].id) | 0;
   const rng = rngFrom(seed);
   const out = [];
-  for (let k = 0; k < cfg.rolloutK; k++) {
+  const K = kOverride || cfg.rolloutK;
+  for (let k = 0; k < K; k++) {
     const caps = caps0.slice();
     const buckets = [];
     for (let h = 0; h < H; h++) buckets.push([]);
@@ -1447,6 +1463,97 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
   return (myTeam === defTeam) ? def : -def;
 }
 
+
+/* 一方手上还剩多少「打得出去的东西」—— 截断前瞻的终局评价 */
+function handStrength(hand, a, trump, cfg) {
+  let v = 0;
+  for (let i = 0; i < hand.length; i++) v += cardValue(a, hand[i], trump, cfg);
+  return v;
+}
+
+/* 每个世界的初始队伍强度只算一次:终局强度 = 初始强度 − 这几墩打出去的牌的价值。
+ * 和「走完之后重新把四家手牌加一遍」完全等价,但代价从 O(全部手牌) 降到 O(打出的牌)。 */
+function worldTeamStrength(hands, a, trump, cfg) {
+  const s = [0, 0];
+  for (let p = 0; p < 4; p++) s[p % 2] += handStrength(hands[p], a, trump, cfg);
+  return s;
+}
+
+/* 截断走子:只推 maxTricks 墩,然后用两边剩牌的强度差收尾。
+ * 返回「对我方的价值」,单位和分数同量级。 */
+function truncPlayout(hands0, trump, plays0, leader, myTeam, maxTricks, a, cfg, baseStrength) {
+  const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
+  const teamPts = [0, 0];
+  const spent = [0, 0];
+  let cur = plays0.slice();
+  /* plays0 里我已经出的那一手也要计进去 */
+  for (let i = 0; i < cur.length; i++) {
+    for (let j = 0; j < cur[i].cards.length; j++) spent[cur[i].seat % 2] += cardValue(a, cur[i].cards[j], trump, cfg);
+  }
+  let lead = E.classify(cur[0].cards, trump);
+  let ldr = leader;
+  let done = 0;
+  while (done < maxTricks) {
+    while (cur.length < 4) {
+      const seat = (ldr + cur.length) % 4;
+      const cd = quickMove(H, seat, trump, cur, lead, cfg.rolloutSmartLead ? 1 : 0, false);
+      const ids = new Set();
+      for (let i = 0; i < cd.length; i++) {
+        ids.add(cd[i].id);
+        spent[seat % 2] += cardValue(a, cd[i], trump, cfg);
+      }
+      H[seat] = dropIds(H[seat], ids);
+      cur.push({ seat: seat, cards: cd });
+    }
+    const r = E.resolveTrick(cur, trump);
+    teamPts[r.winner % 2] += r.points;
+    ldr = r.winner;
+    done++;
+    if (H[ldr].length === 0) break;
+    if (done >= maxTricks) break;
+    const lc = quickMove(H, ldr, trump, [], null, cfg.rolloutSmartLead ? 1 : 0, false);
+    const ids2 = new Set();
+    for (let i = 0; i < lc.length; i++) {
+      ids2.add(lc[i].id);
+      spent[ldr % 2] += cardValue(a, lc[i], trump, cfg);
+    }
+    H[ldr] = dropIds(H[ldr], ids2);
+    lead = E.classify(lc, trump);
+    cur = [{ seat: ldr, cards: lc }];
+  }
+  const mine = baseStrength[myTeam] - spent[myTeam];
+  const theirs = baseStrength[1 - myTeam] - spent[1 - myTeam];
+  return (teamPts[myTeam] - teamPts[1 - myTeam]) + cfg.midTermW * (mine - theirs);
+}
+
+/* 中前期领出:对静态分最高的几个候选做截断前瞻 */
+function midLookPick(cfg, a, view, scored) {
+  if (scored.length < 2) return null;
+  scored.sort(function (x, y) { return y.sc - x.sc; });
+  const m = Math.min(cfg.midM, scored.length);
+  if (m < 2) return null;
+  const worlds = sampleWorlds(a, view, cfg, cfg.midK);
+  const trump = a.trump;
+  /* 每个世界的初始队伍强度只算一次,所有候选共用 */
+  const base = [];
+  for (let w = 0; w < worlds.length; w++) base.push(worldTeamStrength(worlds[w], a, trump, cfg));
+  let best = scored[0].cd, bv = -1e9;
+  for (let i = 0; i < m; i++) {
+    const cd = scored[i].cd;
+    const ids = new Set();
+    for (let j = 0; j < cd.length; j++) ids.add(cd[j].id);
+    let tot = 0;
+    for (let w = 0; w < worlds.length; w++) {
+      const hands = worlds[w].slice();
+      hands[view.seat] = dropIds(hands[view.seat], ids);
+      tot += truncPlayout(hands, trump, [{ seat: view.seat, cards: cd }], view.seat,
+        view.myTeam, cfg.midTricks, a, cfg, base[w]);
+    }
+    if (tot > bv) { bv = tot; best = cd; }
+  }
+  return best;
+}
+
 /* 对静态分最高的几个候选做采样走子,返回胜出的那一个 */
 function rolloutPick(cfg, a, view, scored, plays, leadCl) {
   if (scored.length < 2) return scored.length ? scored[0].cd : null;
@@ -1527,7 +1634,9 @@ function leadV2(cfg, view) {
 
   let best = null, bestScore = -1e9;
   const useRoll = cfg.rollout && hand.length <= (cfg.rolloutMaxCardsLead || cfg.rolloutMaxCards);
+  const useMid = !useRoll && cfg.midLook && hand.length >= cfg.midMinCards && hand.length <= cfg.midMaxCards;
   const scored = useRoll ? [] : null;
+  const scoredMid = useMid ? [] : null;
   const seen = new Set();
   for (let i = 0; i < cands.length; i++) {
     const cd = cands[i];
@@ -1597,10 +1706,15 @@ function leadV2(cfg, view) {
       }
     }
     if (useRoll) scored.push({ cd: cd, sc: sc });
+    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
   if (useRoll && scored.length > 1) {
     const r = rolloutPick(cfg, a, view, scored, null, null);
+    if (r) return r;
+  }
+  if (useMid && scoredMid.length > 1) {
+    const r = midLookPick(cfg, a, view, scoredMid);
     if (r) return r;
   }
   if (!best) best = M.forceLegalLead(hand, trump);
@@ -1711,6 +1825,7 @@ function followV2(cfg, view, plays) {
     }
 
     if (useRoll) scored.push({ cd: cd, sc: sc });
+    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
   if (useRoll && scored.length > 1) {

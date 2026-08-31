@@ -30,6 +30,10 @@ const rows = [
   timeBot('template', B.template), timeBot('naive', B.naive), timeBot('greedy', B.greedy),
   timeBot('pointHog', B.pointHog),
   timeBot('本AI(提交配置)', () => S.makeAI()),
+  timeBot('T1 K4 M3', () => S.makeAI({ midLook: true, midTermW: 1, midTricks: 1 })),
+  timeBot('T1 K3 M3', () => S.makeAI({ midLook: true, midTermW: 1, midTricks: 1, midK: 3 })),
+  timeBot('T1 K2 M3', () => S.makeAI({ midLook: true, midTermW: 1, midTricks: 1, midK: 2 })),
+  timeBot('T1 K3 M2', () => S.makeAI({ midLook: true, midTermW: 1, midTricks: 1, midK: 3, midM: 2 })),
   timeBot('无rollout', () => S.makeAI({ rollout: false })),
 ];
 const base = rows.find(r => r.name === 'greedy').us;
