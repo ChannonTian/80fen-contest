@@ -73,6 +73,7 @@ const DEFAULTS = {
   rolloutM: 6,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
   rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
+  rolloutSmartLead: false,   // 走子时的领出用「这个世界里压不压得住」来判断
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -117,6 +118,10 @@ const DEFAULTS = {
   declMyTeamDealerBar: 0,    // 已定庄且庄家是我方时的门槛调整
   declOppDealerBar: 0,       // 已定庄且庄家是对方时的门槛调整
   ntGate: 99,                // 王对造反成无主的门槛
+  noOverridePartner: false,  // 不把队友亮的主改掉(量到 -2.0σ,默认关)
+  /* 注:「替队友把单张补成对」在两副牌下是不可能的 —— 队友亮的那张级数牌
+   * 只有两张,他手上占了一张,我最多再有一张,凑不出对。规则里「只有亮主者
+   * 本人能加固」这一条,在同花色 1→2 这件事上其实是被牌数逼出来的。 */
   declSideAceW: 0,           // 副门光牌也算牌力
   /* --- 候选集宽度 --- */
   followCap: 60, fillCap: 12,
@@ -375,6 +380,10 @@ function onDealV2(cfg, view) {
     }
   }
   if (n < cfg.declEarlyCards) return null;
+
+  /* 不把队友亮的主改成别的花色 */
+  if (cfg.noOverridePartner && cur && cur.seat !== view.seat &&
+      (cur.seat % 2) === (view.seat % 2)) return null;
 
   let bestSuit = null, bestScore = -1e9;
   for (let i = 0; i < 4; i++) {
@@ -1300,7 +1309,7 @@ function dropIds(hand, idset) {
 }
 
 /* 走子策略:能赢且值钱就赢,队友赢就送分,否则出最废的 */
-function quickMove(hands, seat, trump, plays, leadCl) {
+function quickMove(hands, seat, trump, plays, leadCl, smart) {
   if (!leadCl) {
     const opts = M.quickLeadOptions(hands[seat], trump);
     let best = null, bv = -1e9;
@@ -1308,7 +1317,25 @@ function quickMove(hands, seat, trump, plays, leadCl) {
       const cd = opts[i];
       const cl = E.classify(cd, trump);
       if (!cl) continue;
-      let v = cl.top + cd.length * 2 - E.countPoints(cd) * 0.8 - (cl.suit === 'T' ? 3 : 0);
+      let v;
+      if (smart) {
+        let beaten = false;
+        for (let k = 1; k < 4 && !beaten; k++) {
+          const p = (seat + k) % 4;
+          if ((p % 2) === (seat % 2)) continue;
+          const sc = E.filterSuit(hands[p], cl.suit, trump);
+          if (sc.length) {
+            if (E.canBeatComp(sc, cl, trump)) beaten = true;
+          } else if (cl.suit !== 'T') {
+            const tc = E.filterSuit(hands[p], 'T', trump);
+            if (tc.length && (cl.type === 'single' ||
+                E.canBeatComp(tc, { type: cl.type, top: -1, len: cl.len, cards: cl.cards }, trump))) beaten = true;
+          }
+        }
+        v = (beaten ? -6 : 12) + cd.length * 2 - E.countPoints(cd) * (beaten ? 1.5 : 0) - cl.top * 0.25;
+      } else {
+        v = cl.top + cd.length * 2 - E.countPoints(cd) * 0.8 - (cl.suit === 'T' ? 3 : 0);
+      }
       if (v > bv) { bv = v; best = cd; }
     }
     return best || M.forceLegalLead(hands[seat], trump);
@@ -1344,7 +1371,7 @@ function quickMove(hands, seat, trump, plays, leadCl) {
 }
 
 /* 从当前局面走到这一局结束,返回「对我方的净分」 */
-function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam) {
+function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam, smart) {
   const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
   const teamPts = [0, 0];
   let cur = plays0.slice();
@@ -1354,7 +1381,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam)
   for (; guard < 30; guard++) {
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
-      const cd = quickMove(H, seat, trump, cur, lead);
+      const cd = quickMove(H, seat, trump, cur, lead, smart);
       const ids = new Set();
       for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
       H[seat] = dropIds(H[seat], ids);
@@ -1365,7 +1392,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam)
     lastWinner = r.winner; lastSize = lead.cards.length;
     ldr = r.winner;
     if (H[ldr].length === 0) break;
-    const lc = quickMove(H, ldr, trump, [], null);
+    const lc = quickMove(H, ldr, trump, [], null, smart);
     const ids2 = new Set();
     for (let i = 0; i < lc.length; i++) ids2.add(lc[i].id);
     H[ldr] = dropIds(H[ldr], ids2);
@@ -1406,7 +1433,7 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
       hands[view.seat] = dropIds(hands[view.seat], ids);
       const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
       const ldr = plays ? plays[0].seat : view.seat;
-      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam);
+      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam, cfg.rolloutSmartLead);
     }
     if (tot > bv) { bv = tot; best = cd; }
   }

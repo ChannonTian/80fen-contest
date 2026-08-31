@@ -26,11 +26,12 @@ function timeBot(name, f) {
 const rows = [
   timeBot('template', B.template), timeBot('naive', B.naive), timeBot('greedy', B.greedy),
   timeBot('pointHog', B.pointHog),
-  timeBot('本AI(当前)', () => S.makeAI()),
-  timeBot('roll<=4 K6 M4', () => S.makeAI({ rollout: true, rolloutK: 6, rolloutM: 4 })),
-  timeBot('roll<=4 K8 M4', () => S.makeAI({ rollout: true, rolloutK: 8, rolloutM: 4 })),
-  timeBot('roll<=3 K12 M6', () => S.makeAI({ rollout: true, rolloutMaxCards: 3, rolloutK: 12, rolloutM: 6 })),
-  timeBot('roll<=4 K10 M5', () => S.makeAI({ rollout: true })),
+  timeBot('本AI(当前,<=3)', () => S.makeAI()),
+  timeBot('smart<=5 mg10', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 5, rolloutMargin: 10 })),
+  timeBot('smart<=5 mg25', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 5, rolloutMargin: 25 })),
+  timeBot('smart<=5 K8M4 mg10', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 5, rolloutK: 8, rolloutM: 4, rolloutMargin: 10 })),
+  timeBot('smart<=4', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 4 })),
+  timeBot('无rollout', () => S.makeAI({ rollout: false })),
 ];
 const base = rows.find(r => r.name === 'greedy').us;
 console.log('每次决策平均耗时(' + N + ' 个 deal,两个座位)');
