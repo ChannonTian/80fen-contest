@@ -37,6 +37,16 @@ const DEFAULTS = {
   followPtsWeight: 3.0,
   dumpPtsWeight: 4.0,
   cardCostWeight: 1.0,
+  /* --- cardValue 的形状(决定「该丢哪张」,每次决策都用) --- */
+  cvSure: 12, cvNear: 7, cvFar: 4, cvFarSlope: 0.3,
+  cvTrumpBase: 3, cvTrumpOrd: 0.35, cvOrd: 0.15, cvPts: 0.25,
+  /* --- follow 的期望后手分:区分后面是队友还是对手 --- */
+  followSplitEV: false,
+  partnerDumpRate: 3.0, oppAvoidRate: 1.0, oppDumpRate: 3.0, mateAvoidRate: 1.0,
+  /* --- 领出:队友可能把被压掉的一墩救回来 --- */
+  partnerRescueW: 0,
+  /* --- 领出:打长套,把小牌做成赢张 --- */
+  longSuitW: 0,
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -47,6 +57,9 @@ const DEFAULTS = {
   overkillW: 0.10,           // 同样能赢时偏好便宜的牌
   drawTrumpW: 10,            // 抽主奖励
   safeThrowOnly: true,       // 只甩每一组都是光牌的
+  noThrow: false,            // 完全不甩牌
+  maxSafeThrow: false,       // 额外生成「本门所有光牌组件」的最大安全甩牌
+  throwBonus: 60,            // 甩牌额外加权
   ruffPairFactor: 0.35,      // 毙对子需要主牌对,概率打折
   /* --- 分数的边际价值:靠近 0/40/80/120/160 这些关口时,一分值好几分 --- */
   dynPts: false,
@@ -75,6 +88,21 @@ const DEFAULTS = {
   declJokerW: 0.5,
   declNoDealerBar: 0,        // 无庄局(亮到就坐庄)额外抬高门槛
   declSideAceW: 0,           // 副门光牌也算牌力
+  /* --- 候选集宽度 --- */
+  followCap: 60, fillCap: 12,
+  /* --- 对手手牌建模:按已知断门缩小候选池 --- */
+  voidAwarePool: true,
+  /* --- 对手手牌分布模型:精确手牌张数 + IPF 拟合各家各门的期望张数 --- */
+  handModel: false,
+  ipfIters: 12,
+  /* --- 蒙特卡洛定牌:按「各家剩几张 + 已知断门」采样若干个一致的世界,
+   *     在每个世界里精确判定「压不压得住」,取频率当概率。 --- */
+  mcModel: false,
+  mcSamples: 16,
+  ruffFix: false,            // 「有大牌」与「断门可毙」互斥,不该用 noisy-OR
+  /* --- 仅供开发期探针:给出真实手牌,把概率模型换成精确判定。
+   *     提交时 oracle 恒为 false,这条路径永不执行。 --- */
+  oracle: false, oracleHands: null, __probe: null,
 };
 
 /* ---------------- 局面分析 ---------------- */
@@ -114,7 +142,28 @@ function analyze(view) {
   }
   let hiddenTotal = 0;
   for (let i = 0; i < 85; i++) if (unseen[i] > 0) hiddenTotal += unseen[i];
-  return { trump: trump, unseen: unseen, voids: voids, teamPts: teamPts, nTricks: nTricks, hiddenTotal: hiddenTotal };
+
+  /* 各家剩几张牌:每人起手 25 张,减掉 history 里他出过的 */
+  const hsize = [25, 25, 25, 25];
+  for (let i = 0; i < hist.length; i++) hsize[hist[i].seat] -= hist[i].cards.length;
+
+  /* 每一门还有多少张暗牌 */
+  const SK = ['T', 'S', 'H', 'D', 'C'];
+  const nSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+  for (let sIdx = 0; sIdx < 5; sIdx++) {
+    const suit = sIdx === 4 ? 'X' : ALLSUITS[sIdx];
+    const lo = sIdx === 4 ? 15 : 2, hi = sIdx === 4 ? 16 : 14;
+    for (let r = lo; r <= hi; r++) {
+      const c = unseen[sIdx * 17 + r];
+      if (c > 0) nSuit[E.effSuit({ suit: suit, rank: r, id: -1 }, trump)] += c;
+    }
+  }
+  return {
+    trump: trump, unseen: unseen, voids: voids, teamPts: teamPts, nTricks: nTricks,
+    hiddenTotal: hiddenTotal, hsize: hsize, nSuit: nSuit, seat: view.seat,
+    kittyUnknown: (view.buriedKnown && view.buriedKnown.length) ? 0 : (view.kittySize || 8),
+    w: null,
+  };
 }
 
 /* 同门里还没露面、比它大的牌有几张 */
@@ -170,14 +219,15 @@ function unseenInSuit(a, es, trump) {
 }
 
 /* 留牌价值:越高越舍不得出 */
-function cardValue(a, c, trump) {
+function cardValue(a, c, trump, cfg) {
   const es = E.effSuit(c, trump);
   const oi = E.ordIdx(c, trump);
   const b = beatersLeft(a, c, trump);
-  let v = b === 0 ? 12 : (b <= 2 ? 7 : Math.max(0, 4 - b * 0.3));
-  if (es === 'T') v += 3 + oi * 0.35;
-  else v += oi * 0.15;
-  v += E.cardPoints(c) * 0.25;
+  const k = cfg || DEFAULTS;
+  let v = b === 0 ? k.cvSure : (b <= 2 ? k.cvNear : Math.max(0, k.cvFar - b * k.cvFarSlope));
+  if (es === 'T') v += k.cvTrumpBase + oi * k.cvTrumpOrd;
+  else v += oi * k.cvOrd;
+  v += E.cardPoints(c) * k.cvPts;
   return v;
 }
 
@@ -455,7 +505,7 @@ function follow(cfg, view, plays) {
   const lead0 = E.classify(plays[0].cards, trump);
   if (!lead0) return M.forceLegalFollow(hand, E.classify(plays[0].cards, trump) || { cards: plays[0].cards, suit: 'T', type: 'single' }, trump, null);
   const a = analyze(view);
-  const cands = M.genFollowCandidates(hand, lead0, trump, null, 60);
+  const cands = M.genFollowCandidates(hand, lead0, trump, null, cfg.followCap, cfg.fillCap);
 
   const cur = E.resolveTrick(plays, trump);
   const winnerSeat = cur.winner;
@@ -602,8 +652,321 @@ function pPairInHand(h, hidden) {
   return (h * (h - 1)) / (hidden * (hidden - 1));
 }
 
+
+
+/* ---------------- 蒙特卡洛定牌 ---------------- */
+
+/* 确定性伪随机:种子由局面本身派生,同一局面永远采到同一批世界 */
+function mkRng(seed) {
+  let a = seed | 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* 一家在某一门里的「压制力」摘要 */
+function beatSummary(cards, trump) {
+  const out = { n: cards.length, maxOrd: -1, maxPair: -1, tr: null };
+  if (!cards.length) return out;
+  for (let i = 0; i < cards.length; i++) {
+    const o = E.ordIdx(cards[i], trump);
+    if (o > out.maxOrd) out.maxOrd = o;
+  }
+  const comps = E.decompose(cards, trump);
+  const tr = [];
+  for (let i = 0; i < comps.length; i++) {
+    const c = comps[i];
+    if (c.type === 'pair') { if (c.top > out.maxPair) out.maxPair = c.top; }
+    else if (c.type === 'tractor') {
+      if (c.top > out.maxPair) out.maxPair = c.top;
+      for (let L = 2; L <= c.len; L++) if (!(tr[L] >= 0) || c.top > tr[L]) tr[L] = c.top;
+    }
+  }
+  out.tr = tr;
+  return out;
+}
+
+const MCK = ['T', 'S', 'H', 'D', 'C'];
+
+function buildWorlds(a, view, cfg) {
+  if (a.worlds) return a.worlds;
+  const trump = a.trump;
+  const me = view.seat;
+
+  /* 暗牌池 */
+  const pool = [];
+  let hseed = view.history.length * 7919 + me * 131 + view.hand.length * 31;
+  for (let i = 0; i < view.hand.length; i++) hseed = (hseed * 33 + view.hand[i].id) | 0;
+  for (let sIdx = 0; sIdx < 5; sIdx++) {
+    const suit = sIdx === 4 ? 'X' : ALLSUITS[sIdx];
+    const lo = sIdx === 4 ? 15 : 2, hi = sIdx === 4 ? 16 : 14;
+    for (let r = lo; r <= hi; r++) {
+      const c = a.unseen[sIdx * 17 + r];
+      for (let q = 0; q < c; q++) pool.push({ suit: suit, rank: r, id: -1 - pool.length });
+    }
+  }
+  /* 持有者:三个其他座位 + 底牌 */
+  const seats = [];
+  for (let p = 0; p < 4; p++) if (p !== me) seats.push(p);
+  const caps0 = [];
+  for (let i = 0; i < seats.length; i++) caps0.push(Math.max(0, a.hsize[seats[i]]));
+  caps0.push(Math.max(0, a.kittyUnknown));
+  const H = caps0.length;
+
+  /* 每张牌能落到哪些持有者手上(底牌无断门约束) */
+  const allow = [];
+  for (let i = 0; i < pool.length; i++) {
+    const es = E.effSuit(pool[i], trump);
+    const list = [];
+    for (let h = 0; h < H; h++) {
+      if (h < seats.length && a.voids[seats[h]][es]) continue;
+      list.push(h);
+    }
+    allow.push(list.length ? list : [H - 1]);
+  }
+  /* 约束紧的先分配 */
+  const order = [];
+  for (let i = 0; i < pool.length; i++) order.push(i);
+  order.sort(function (x, y) { return allow[x].length - allow[y].length; });
+
+  const rng = mkRng(hseed);
+  const K = cfg.mcSamples;
+  const worlds = [];
+  for (let k = 0; k < K; k++) {
+    const caps = caps0.slice();
+    const buckets = [];
+    for (let h = 0; h < H; h++) buckets.push([]);
+    /* 同约束等级内部打乱 */
+    for (let i = order.length - 1; i > 0; i--) {
+      if (allow[order[i]].length !== allow[order[i - 1]].length) continue;
+      const j = i - Math.floor(rng() * 2);
+      const t = order[i]; order[i] = order[j]; order[j] = t;
+    }
+    for (let oi = 0; oi < order.length; oi++) {
+      const ci = order[oi];
+      const list = allow[ci];
+      let tot = 0;
+      for (let i = 0; i < list.length; i++) tot += caps[list[i]];
+      let pick = -1;
+      if (tot > 0) {
+        let r = rng() * tot;
+        for (let i = 0; i < list.length; i++) { r -= caps[list[i]]; if (r <= 0) { pick = list[i]; break; } }
+        if (pick < 0) pick = list[list.length - 1];
+      } else {
+        for (let h = 0; h < H; h++) if (caps[h] > 0) { pick = h; break; }
+        if (pick < 0) pick = H - 1;
+      }
+      caps[pick]--;
+      buckets[pick].push(pool[ci]);
+    }
+    /* 每家每门的压制力摘要 */
+    const tab = {};
+    for (let i = 0; i < seats.length; i++) {
+      const bySuit = { T: [], S: [], H: [], D: [], C: [] };
+      const b = buckets[i];
+      for (let j = 0; j < b.length; j++) bySuit[E.effSuit(b[j], trump)].push(b[j]);
+      const t = {};
+      for (let j = 0; j < 5; j++) t[MCK[j]] = beatSummary(bySuit[MCK[j]], trump);
+      tab[seats[i]] = t;
+    }
+    worlds.push(tab);
+  }
+  a.worlds = worlds;
+  return worlds;
+}
+
+/* 在一个世界里,这一家压不压得住 cl */
+function worldBeats(tab, cl) {
+  const es = cl.suit;
+  const s = tab[es];
+  if (!s) return false;
+  if (s.n > 0) {
+    if (cl.type === 'single') return s.maxOrd > cl.top;
+    if (cl.type === 'pair') return s.maxPair > cl.top;
+    if (cl.type === 'tractor') { const v = s.tr[cl.len]; return v !== undefined && v > cl.top; }
+    for (let i = 0; i < cl.comps.length; i++) {
+      const c = cl.comps[i];
+      if (worldBeats(tab, { type: c.type, suit: es, top: c.top, len: c.len, comps: null })) return true;
+    }
+    return false;
+  }
+  /* 本门断了 → 能不能用主牌毙 */
+  if (es === 'T') return false;
+  const t = tab['T'];
+  if (!t || t.n === 0) return false;
+  if (cl.type === 'single') return true;
+  if (cl.type === 'pair') return t.maxPair >= 0;
+  if (cl.type === 'tractor') return t.tr[cl.len] !== undefined;
+  let need = 0;
+  for (let i = 0; i < cl.comps.length; i++) need = Math.max(need, cl.comps[i].type === 'tractor' ? cl.comps[i].len : 0);
+  return need ? t.tr[need] !== undefined : true;
+}
+
+function pOppBeatsMC(a, view, cl, seat, cfg) {
+  const worlds = buildWorlds(a, view, cfg);
+  let n = 0;
+  for (let i = 0; i < worlds.length; i++) if (worldBeats(worlds[i][seat], cl)) n++;
+  const p = n / worlds.length;
+  return p < 0.02 ? 0.02 : (p > 0.98 ? 0.98 : p);
+}
+
+/* IPF:在「每家剩几张」和「每门还剩几张」两组边际下,拟合各家各门的期望张数。
+ * 已知断门的格子锁 0。w[seat][suit] = 某一张该门暗牌落在这家手上的概率。 */
+const SUITKEYS = ['T', 'S', 'H', 'D', 'C'];
+function buildHandModel(a, cfg) {
+  if (a.w) return a.w;
+  const me = a.seat;
+  const rows = [];                                     // 0..2 = 三个对手/队友,3 = 底牌
+  for (let p = 0; p < 4; p++) if (p !== me) rows.push({ seat: p, total: Math.max(0, a.hsize[p]) });
+  rows.push({ seat: -1, total: a.kittyUnknown });
+  const R = rows.length;
+  const x = [];
+  for (let i = 0; i < R; i++) {
+    const r = [];
+    for (let j = 0; j < 5; j++) {
+      const blocked = rows[i].seat >= 0 && a.voids[rows[i].seat][SUITKEYS[j]];
+      r.push(blocked ? 0 : 1);
+    }
+    x.push(r);
+  }
+  const colT = [];
+  for (let j = 0; j < 5; j++) colT.push(a.nSuit[SUITKEYS[j]]);
+  for (let it = 0; it < cfg.ipfIters; it++) {
+    for (let i = 0; i < R; i++) {
+      let s0 = 0;
+      for (let j = 0; j < 5; j++) s0 += x[i][j];
+      const f = s0 > 1e-9 ? rows[i].total / s0 : 0;
+      for (let j = 0; j < 5; j++) x[i][j] *= f;
+    }
+    for (let j = 0; j < 5; j++) {
+      let s0 = 0;
+      for (let i = 0; i < R; i++) s0 += x[i][j];
+      const f = s0 > 1e-9 ? colT[j] / s0 : 0;
+      for (let i = 0; i < R; i++) x[i][j] *= f;
+    }
+  }
+  const w = [{}, {}, {}, {}];
+  for (let i = 0; i < R; i++) {
+    if (rows[i].seat < 0) continue;
+    for (let j = 0; j < 5; j++) {
+      const n = colT[j];
+      let v = n > 0 ? x[i][j] / n : 0;
+      if (v < 0) v = 0; if (v > 1) v = 1;
+      w[rows[i].seat][SUITKEYS[j]] = v;
+    }
+  }
+  a.w = w;
+  return w;
+}
+
+/* 用 IPF 权重估「这一家压得住 cl」的概率 */
+function pOppBeatsModel(a, cl, seat, trump, cfg) {
+  const es = cl.suit;
+  const w = buildHandModel(a, cfg)[seat][es] || 0;
+  let p = 0;
+  if (cl.type === 'single') {
+    const k = beatersLeft(a, cl.cards[0], trump);
+    p = 1 - Math.pow(1 - w, k);
+  } else if (cl.type === 'pair' || cl.type === 'tractor') {
+    const slots = pairBeatersLeft(a, cl.top, es, trump);
+    const pp = w * w;
+    if (cl.type === 'pair') p = 1 - Math.pow(1 - pp, slots);
+    else {
+      const per = Math.pow(pp, cl.len);
+      const chains = Math.max(0, slots - cl.len + 1);
+      p = 1 - Math.pow(1 - per, chains);
+    }
+  } else {
+    let q = 1;
+    for (let i = 0; i < cl.comps.length; i++) {
+      const c = cl.comps[i];
+      q *= (1 - pOppBeatsModel(a, { type: c.type, suit: es, top: c.top, cards: c.cards, len: c.len }, seat, trump, cfg));
+    }
+    p = 1 - q;
+  }
+  if (es !== 'T') {
+    const nS = a.nSuit[es] || 0;
+    const pVoid = a.voids[seat][es] ? 1 : Math.pow(1 - w, nS);
+    const wt = buildHandModel(a, cfg)[seat]['T'] || 0;
+    const nT = a.nSuit['T'] || 0;
+    const pHasT = 1 - Math.pow(1 - wt, nT);
+    let pRuff = pVoid * pHasT;
+    if (cl.type !== 'single') pRuff *= cfg.ruffPairFactor;
+    p = 1 - (1 - p) * (1 - pRuff);
+  }
+  return p < 0 ? 0 : (p > 0.98 ? 0.98 : p);
+}
+
+/* 这一家可能持有的暗牌总数(去掉他已知断掉的门) */
+function poolFor(a, seat, trump, hidden) {
+  let out = hidden;
+  const keys = ['T', 'S', 'H', 'D', 'C'];
+  for (let ki = 0; ki < keys.length; ki++) {
+    if (!a.voids[seat][keys[ki]]) continue;
+    out -= unseenInSuit(a, keys[ki], trump);
+  }
+  return out > 1 ? out : 1;
+}
+
 /* 某一家压住结构 cl 的概率 */
-function pOppBeats(a, cl, hSize, hidden, seat, trump, cfg) {
+function oracleBeats(cfg, cl, seat, trump) {
+  const h = cfg.oracleHands()[seat];
+  const es = cl.suit;
+  const sc = E.filterSuit(h, es, trump);
+  if (sc.length > 0) {
+    if (cl.type === 'throw') {
+      for (let i = 0; i < cl.comps.length; i++) if (E.canBeatComp(sc, cl.comps[i], trump)) return true;
+      return false;
+    }
+    return E.canBeatComp(sc, { type: cl.type, top: cl.top, len: cl.len, cards: cl.cards }, trump);
+  }
+  if (es === 'T') return false;
+  const tc = E.filterSuit(h, 'T', trump);
+  if (!tc.length) return false;
+  if (cl.type === 'single') return true;
+  if (cl.type === 'pair') return E.canBeatComp(tc, { type: 'pair', top: -1, cards: cl.cards }, trump);
+  if (cl.type === 'tractor') return E.canBeatComp(tc, { type: 'tractor', top: -1, len: cl.len, cards: cl.cards }, trump);
+  return true;
+}
+
+function pOppBeats(a, cl, hSize, hidden0, seat, trump, cfg) {
+  const es = cl.suit;
+  if (cfg.__probe && cfg.oracleHands) {
+    const truth = oracleBeats(cfg, cl, seat, trump) ? 1 : 0;
+    const pMC = pOppBeatsMC(a, cfg.__view, cl, seat, cfg);
+    const hid = poolFor(a, seat, trump, hidden0);
+    const pCF = pClosedForm(a, cl, hSize, hid, seat, trump, cfg);
+    const pIPF = pOppBeatsModel(a, cl, seat, trump, cfg);
+    cfg.__probe(truth, pCF, pMC, pIPF, cl, a, seat, trump, hSize);
+  }
+  if (cfg.oracle && cfg.oracleHands) {
+    const h = cfg.oracleHands()[seat];
+    const sc = E.filterSuit(h, es, trump);
+    let can = false;
+    if (cl.type === 'throw') {
+      for (let i = 0; i < cl.comps.length && !can; i++) can = E.canBeatComp(sc, cl.comps[i], trump);
+    } else {
+      can = E.canBeatComp(sc, { type: cl.type, top: cl.top, len: cl.len, cards: cl.cards }, trump);
+    }
+    if (!can && es !== 'T' && sc.length === 0) {
+      const tc = E.filterSuit(h, 'T', trump);
+      if (tc.length) {
+        can = cl.type === 'single' ? true
+          : E.canBeatComp(tc, { type: cl.type, top: -1, len: cl.len, cards: cl.cards }, trump);
+      }
+    }
+    return can ? 0.95 : 0.02;
+  }
+  if (cfg.mcModel && cfg.__view) return pOppBeatsMC(a, cfg.__view, cl, seat, cfg);
+  if (cfg.handModel) return pOppBeatsModel(a, cl, seat, trump, cfg);
+  const hidden = cfg.voidAwarePool ? poolFor(a, seat, trump, hidden0) : hidden0;
+  return pClosedForm(a, cl, hSize, hidden, seat, trump, cfg);
+}
+
+function pClosedForm(a, cl, hSize, hidden, seat, trump, cfg) {
   const es = cl.suit;
   let p = 0;
   if (cl.type === 'single') {
@@ -630,12 +993,16 @@ function pOppBeats(a, cl, hSize, hidden, seat, trump, cfg) {
   }
   if (es !== 'T') {
     const nSuit = unseenInSuit(a, es, trump);
-    const pVoid = a.voids[seat][es] ? 1 : pNone(nSuit, hSize, hidden);
+    const known = a.voids[seat][es];
+    const pVoid = known ? 1 : pNone(nSuit, hSize, hidden);
     const nT = unseenInSuit(a, 'T', trump);
-    const pHasT = 1 - pNone(nT, hSize, hidden);
+    /* 已经断了这门,他的暗牌池里就没有这门的牌了 —— 主牌密度更高 */
+    const poolGV = cfg.ruffFix ? Math.max(1, hidden - (known ? 0 : nSuit)) : hidden;
+    const pHasT = 1 - pNone(nT, hSize, poolGV);
     let pRuff = pVoid * pHasT;
     if (cl.type !== 'single') pRuff *= cfg.ruffPairFactor;
-    p = 1 - (1 - p) * (1 - pRuff);
+    /* 「本门有更大的牌」和「本门断了」是互斥事件,不能用 noisy-OR */
+    p = cfg.ruffFix ? p + pRuff : 1 - (1 - p) * (1 - pRuff);
   }
   return p < 0 ? 0 : (p > 0.98 ? 0.98 : p);
 }
@@ -749,6 +1116,7 @@ function structCost(cfg, a, view, cd, trump) {
 function leadV2(cfg, view) {
   const trump = view.trump;
   const hand = view.hand;
+  cfg.__view = view;
   const a = analyze(view);
   const H = hand.length;
   const hidden = a.hiddenTotal;
@@ -761,6 +1129,26 @@ function leadV2(cfg, view) {
   let cands = M.genLeadCandidates(hand, trump);
   const thr = M.genThrowCandidates(hand, trump, 30);
   for (let i = 0; i < thr.length; i++) cands.push(thr[i]);
+  if (cfg.maxSafeThrow) {
+    const gs = M.bySuit(hand, trump);
+    const keys = ['T', 'S', 'H', 'D', 'C'];
+    for (let ki = 0; ki < keys.length; ki++) {
+      const cs = gs[keys[ki]];
+      if (cs.length < 3) continue;
+      const comps = E.decompose(cs, trump);
+      if (comps.length < 2) continue;
+      const pick = [];
+      let nc = 0;
+      for (let i = 0; i < comps.length; i++) {
+        const c = comps[i];
+        const sure = c.type === 'single'
+          ? beatersLeft(a, c.cards[0], trump) === 0
+          : pairBeatersLeft(a, c.top, keys[ki], trump) === 0;
+        if (sure) { nc++; for (let j = 0; j < c.cards.length; j++) pick.push(c.cards[j]); }
+      }
+      if (nc >= 2) cands.push(pick);
+    }
+  }
 
   let best = null, bestScore = -1e9;
   const seen = new Set();
@@ -775,6 +1163,7 @@ function leadV2(cfg, view) {
 
     /* 甩牌:只甩每一组都压不住的 */
     if (cl.type === 'throw') {
+      if (cfg.noThrow) continue;
       if (cfg.safeThrowOnly) {
         let allSure = true;
         for (let j = 0; j < cl.comps.length; j++) {
@@ -790,6 +1179,11 @@ function leadV2(cfg, view) {
 
     let pWin = 1;
     for (let j = 0; j < 2; j++) pWin *= (1 - pOppBeats(a, cl, H, hidden, opps[j], trump, cfg));
+    if (cfg.partnerRescueW) {
+      const pr = pOppBeats(a, cl, H, hidden, (view.seat + 2) % 4, trump, cfg);
+      pWin = pWin + (1 - pWin) * pr * cfg.partnerRescueW;
+      if (pWin > 0.98) pWin = 0.98;
+    }
 
     const myPts = E.countPoints(cd);
     const evWin = myPts + L * cfg.leadWinPts;
@@ -799,11 +1193,20 @@ function leadV2(cfg, view) {
     sc += lastTrickSwing(cfg, view, L, pWin);
 
     let spent = 0;
-    for (let j = 0; j < L; j++) spent += cardValue(a, cd[j], trump);
+    for (let j = 0; j < L; j++) spent += cardValue(a, cd[j], trump, cfg);
     sc -= (1 - pWin) * spent * cfg.lossW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);
 
+    if (cl.type === 'throw') sc += cfg.throwBonus;
+    if (cfg.longSuitW && cl.suit !== 'T') {
+      /* 本门我有 m 张、外面还有 u 张:外面出完之后我的小牌都变成赢张 */
+      let m = 0;
+      for (let j = 0; j < hand.length; j++) if (E.effSuit(hand[j], trump) === cl.suit) m++;
+      const u = unseenInSuit(a, cl.suit, trump);
+      const est = m - u / 2;
+      if (est > 0) sc += cfg.longSuitW * Math.min(est, 4);
+    }
     if (cl.suit === 'T') {
       if (isDecl && trumpLeft > 0 && myTrumps >= 6) {
         sc += cfg.drawTrumpW * Math.min(1, myTrumps / 10) * Math.min(1, trumpLeft / 8);
@@ -820,13 +1223,14 @@ function leadV2(cfg, view) {
 function followV2(cfg, view, plays) {
   const trump = view.trump;
   const hand = view.hand;
+  cfg.__view = view;
   const lead0 = E.classify(plays[0].cards, trump);
   if (!lead0) return M.forceLegalFollow(hand, { cards: plays[0].cards, suit: 'T', type: 'single' }, trump, null);
   const a = analyze(view);
   const H = hand.length;
   const hidden = a.hiddenTotal;
   const L = lead0.cards.length;
-  const cands = M.genFollowCandidates(hand, lead0, trump, null, 60);
+  const cands = M.genFollowCandidates(hand, lead0, trump, null, cfg.followCap, cfg.fillCap);
 
   /* 我之后还有谁没出 */
   const laterSeats = [];
@@ -868,14 +1272,26 @@ function followV2(cfg, view, plays) {
       }
     }
 
-    const expLater = laterSeats.length * L * cfg.ptsPerCardLater;
-    const total = ptsOnTable + myPts + expLater;
-    let sc = (2 * pTeam - 1) * total * PS;
+    let sc;
+    if (cfg.followSplitEV) {
+      let winLater = 0, loseLater = 0;
+      for (let j = 0; j < laterSeats.length; j++) {
+        const isMate = laterSeats[j] % 2 === view.myTeam;
+        winLater += L * (isMate ? cfg.partnerDumpRate : cfg.oppAvoidRate);
+        loseLater += L * (isMate ? cfg.mateAvoidRate : cfg.oppDumpRate);
+      }
+      const base = ptsOnTable + myPts;
+      sc = (pTeam * (base + winLater) - (1 - pTeam) * (base + loseLater)) * PS;
+    } else {
+      const expLater = laterSeats.length * L * cfg.ptsPerCardLater;
+      const total = ptsOnTable + myPts + expLater;
+      sc = (2 * pTeam - 1) * total * PS;
+    }
     sc += pTeam * cfg.tempoW * 0.5;
     sc += lastTrickSwing(cfg, view, L, pTeam);
 
     let spent = 0;
-    for (let j = 0; j < cd.length; j++) spent += cardValue(a, cd[j], trump);
+    for (let j = 0; j < cd.length; j++) spent += cardValue(a, cd[j], trump, cfg);
     sc -= (1 - pTeam) * spent * cfg.lossW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);

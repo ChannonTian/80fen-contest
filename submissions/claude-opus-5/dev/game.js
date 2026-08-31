@@ -230,6 +230,10 @@ function playRound(cfg) {
   let leader = declSeat;
   let lastWinner = -1, lastLeadSize = 1;
 
+  const godify = function () {
+    for (let i = 0; i < 4; i++) if (bots[i].cfg && (bots[i].cfg.oracle || bots[i].cfg.__probe)) bots[i].cfg.oracleHands = function () { return hands; };
+  };
+  godify();
   const mkView = function (phase, seat, trickNo) {
     return {
       phase: phase, seat: seat, myTeam: seat % 2, hand: hands[seat],

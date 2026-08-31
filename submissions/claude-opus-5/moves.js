@@ -312,8 +312,9 @@ function genFills(rest, j, trump, cap, leadCl) {
   return out.length ? out : [byJunk.slice(0, j)];
 }
 
-function genFollowCandidates(hand, lead, trump, opts, cap) {
+function genFollowCandidates(hand, lead, trump, opts, cap, fillCap) {
   cap = cap || 60;
+  fillCap = fillCap || 12;
   const S = E.filterSuit(hand, lead.suit, trump);
   const rest = [];
   for (let i = 0; i < hand.length; i++) if (E.effSuit(hand[i], trump) !== lead.suit) rest.push(hand[i]);
@@ -321,7 +322,7 @@ function genFollowCandidates(hand, lead, trump, opts, cap) {
   const ns = Math.min(k, S.length);
   const parts = genInSuitParts(S, lead, trump, opts, Math.max(8, cap));
   const j = k - ns;
-  const fills = genFills(rest, j, trump, 12, lead);
+  const fills = genFills(rest, j, trump, fillCap, lead);
   const out = [];
   const seen = new Set();
   for (let a = 0; a < parts.length; a++) {
