@@ -29,10 +29,7 @@ function timeBot(name, f) {
 const rows = [
   timeBot('template', B.template), timeBot('naive', B.naive), timeBot('greedy', B.greedy),
   timeBot('pointHog', B.pointHog),
-  timeBot('本AI(当前,<=3)', () => S.makeAI()),
-  timeBot('roll<=4', () => S.makeAI({ rolloutMaxCards: 4 })),
-  timeBot('roll<=3', () => S.makeAI({ rolloutMaxCards: 3 })),
-  timeBot('cap60fill12 无roll', () => S.makeAI({ rollout: false, followCap: 60, fillCap: 12 })),
+  timeBot('本AI(提交配置)', () => S.makeAI()),
   timeBot('无rollout', () => S.makeAI({ rollout: false })),
 ];
 const base = rows.find(r => r.name === 'greedy').us;
