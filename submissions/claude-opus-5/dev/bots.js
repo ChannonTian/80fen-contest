@@ -93,4 +93,85 @@ function greedy() {
   };
 }
 
-module.exports = { template, naive, greedy };
+
+/* 抢分型:见分就抢,能赢就赢,分牌优先垫给队友 */
+function pointHog() {
+  const g = greedy();
+  return {
+    name: 'pointHog',
+    onDeal: g.onDeal, onRebel: () => false, discard: g.discard,
+    lead(v) {
+      const cands = M.genLeadCandidates(v.hand, v.trump);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const cl = E.classify(cd, v.trump); if (!cl) continue;
+        const s = cl.top * 2 + cd.length * 3 + E.countPoints(cd) * 0.5;
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalLead(v.hand, v.trump);
+    },
+    follow(v, plays) {
+      const lead = E.classify(plays[0].cards, v.trump);
+      const cands = M.genFollowCandidates(v.hand, lead, v.trump, null, 40);
+      const pts = plays.reduce((a, p) => a + E.countPoints(p.cards), 0);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const r = E.resolveTrick(plays.concat([{ seat: v.seat, cards: cd }]), v.trump);
+        const iWin = r.winner === v.seat, mate = (r.winner % 2) === v.myTeam;
+        let s = iWin ? 200 + pts * 4 : (mate ? 60 + E.countPoints(cd) * 6 : -E.countPoints(cd) * 2);
+        for (const c of cd) s -= E.ordIdx(c, v.trump) * 0.2;
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalFollow(v.hand, lead, v.trump, null);
+    },
+  };
+}
+
+/* 攒主型:主牌能不出就不出,副牌一律出小 */
+function trumpMiser() {
+  const g = greedy();
+  return {
+    name: 'trumpMiser',
+    onDeal: g.onDeal, onRebel: () => false, discard: g.discard,
+    lead(v) {
+      const cands = M.genLeadCandidates(v.hand, v.trump);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const cl = E.classify(cd, v.trump); if (!cl) continue;
+        let s = cl.top + cd.length * 2 - (cl.suit === 'T' ? 40 : 0) - E.countPoints(cd);
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalLead(v.hand, v.trump);
+    },
+    follow(v, plays) {
+      const lead = E.classify(plays[0].cards, v.trump);
+      const cands = M.genFollowCandidates(v.hand, lead, v.trump, null, 40);
+      const pts = plays.reduce((a, p) => a + E.countPoints(p.cards), 0);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const r = E.resolveTrick(plays.concat([{ seat: v.seat, cards: cd }]), v.trump);
+        const iWin = r.winner === v.seat, mate = (r.winner % 2) === v.myTeam;
+        let nT = 0; for (const c of cd) if (E.effSuit(c, v.trump) === 'T') nT++;
+        let s = iWin ? (pts >= 10 ? 120 + pts * 2 : 20) : (mate ? 50 + E.countPoints(cd) * 3 : -E.countPoints(cd) * 3);
+        s -= nT * 12;
+        for (const c of cd) s -= E.ordIdx(c, v.trump) * 0.4;
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalFollow(v.hand, lead, v.trump, null);
+    },
+  };
+}
+
+/* 同门异构:自家 AI 换一批权重,当作「水平相当但风格不同」的对手 */
+function sibling() {
+  const S = require('../strategy.js');
+  return S.makeAI({
+    name: 'sibling',
+    tempoW: 7, lossW: 1.3, overkillW: 0.22, drawTrumpW: 18,
+    leadWinPts: 4.6, leadLosePts: 6.2, ptsPerCardLater: 2.6,
+    breakPairW: 3, voidGainW: 2, throwBonus: 25,
+    declProjNeed: 9, ruffPairFactor: 0.45, cvSure: 15, cvTrumpBase: 5,
+  });
+}
+
+module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling };

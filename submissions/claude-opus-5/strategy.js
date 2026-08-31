@@ -47,6 +47,10 @@ const DEFAULTS = {
   partnerRescueW: 0,
   /* --- 领出:打长套,把小牌做成赢张 --- */
   longSuitW: 0,
+  /* --- 庄家/闲家用不同的权重 --- */
+  declLossW: 0, defLossW: 0,          // 0 = 沿用 lossW
+  declTempoW: 0, defTempoW: 0,        // 0 = 沿用 tempoW
+  mateLaterFactor: 0.9,               // 队友翻回来之后还要顶住后面对手的折扣
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -86,7 +90,10 @@ const DEFAULTS = {
   declTrumpLenW: 1.0,        // 折算主牌总张数(含各门级数牌和王)
   declHiW: 1.2,              // 本门 A / K 的加权
   declJokerW: 0.5,
-  declNoDealerBar: 0,        // 无庄局(亮到就坐庄)额外抬高门槛
+  declNoDealerBar: -5,       // 无庄局(亮到就坐庄)额外抬高门槛
+  declMyTeamDealerBar: 0,    // 已定庄且庄家是我方时的门槛调整
+  declOppDealerBar: 0,       // 已定庄且庄家是对方时的门槛调整
+  ntGate: 99,                // 王对造反成无主的门槛
   declSideAceW: 0,           // 副门光牌也算牌力
   /* --- 候选集宽度 --- */
   followCap: 60, fillCap: 12,
@@ -328,7 +335,7 @@ function onDealV2(cfg, view) {
   if (cfg.jokerRebel && (bj >= 2 || sj >= 2)) {
     const st = bj >= 2 ? 4 : 3;
     if (!cur || (cur.seat !== view.seat && st > cur.strength)) {
-      if (totalRank * 2 + jokers * 2 >= 8) return { suit: null, strength: st };
+      if (totalRank * 2 + jokers * 2 >= cfg.ntGate) return { suit: null, strength: st };
     }
   }
   if (n < cfg.declEarlyCards) return null;
@@ -362,6 +369,9 @@ function onDealV2(cfg, view) {
   if (n >= 24 && !cur) need -= 1.0;
   if (strength === 2) need -= 0.8;
   if (!view.dealerKnown) need += cfg.declNoDealerBar;
+  else if (view.dealer >= 0) {
+    need += (view.dealer % 2 === view.seat % 2) ? cfg.declMyTeamDealerBar : cfg.declOppDealerBar;
+  }
   return bestScore >= need ? { suit: bestSuit, strength: strength } : null;
 }
 
@@ -515,6 +525,9 @@ function follow(cfg, view, plays) {
     (plays[1] ? E.countPoints(plays[1].cards) : 0) +
     (plays[2] ? E.countPoints(plays[2].cards) : 0);
   const PS = ptsScale(a, view, cfg);
+  const isDecl2 = view.myTeam === (view.declSeat % 2);
+  const LOSSW = (isDecl2 ? cfg.declLossW : cfg.defLossW) || cfg.lossW;
+  const TEMPOW = (isDecl2 ? cfg.declTempoW : cfg.defTempoW) || cfg.tempoW;
 
   let best = null, bestScore = -1e9;
   for (let i = 0; i < cands.length; i++) {
@@ -1122,6 +1135,8 @@ function leadV2(cfg, view) {
   const hidden = a.hiddenTotal;
   const opps = [(view.seat + 1) % 4, (view.seat + 3) % 4];
   const isDecl = view.myTeam === (view.declSeat % 2);
+  const LOSSW = (isDecl ? cfg.declLossW : cfg.defLossW) || cfg.lossW;
+  const TEMPOW = (isDecl ? cfg.declTempoW : cfg.defTempoW) || cfg.tempoW;
   const myTrumps = countTrump(hand, trump);
   const trumpLeft = unseenInSuit(a, 'T', trump);
 
@@ -1189,12 +1204,12 @@ function leadV2(cfg, view) {
     const evWin = myPts + L * cfg.leadWinPts;
     const evLose = myPts + L * cfg.leadLosePts;
     let sc = (pWin * evWin - (1 - pWin) * evLose) * PS;
-    sc += pWin * cfg.tempoW;
+    sc += pWin * TEMPOW;
     sc += lastTrickSwing(cfg, view, L, pWin);
 
     let spent = 0;
     for (let j = 0; j < L; j++) spent += cardValue(a, cd[j], trump, cfg);
-    sc -= (1 - pWin) * spent * cfg.lossW;
+    sc -= (1 - pWin) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);
 
@@ -1243,6 +1258,9 @@ function followV2(cfg, view, plays) {
     (plays[1] ? E.countPoints(plays[1].cards) : 0) +
     (plays[2] ? E.countPoints(plays[2].cards) : 0);
   const PS = ptsScale(a, view, cfg);
+  const isDecl2 = view.myTeam === (view.declSeat % 2);
+  const LOSSW = (isDecl2 ? cfg.declLossW : cfg.defLossW) || cfg.lossW;
+  const TEMPOW = (isDecl2 ? cfg.declTempoW : cfg.defTempoW) || cfg.tempoW;
 
   let best = null, bestScore = -1e9;
   for (let i = 0; i < cands.length; i++) {
@@ -1266,7 +1284,7 @@ function followV2(cfg, view, plays) {
         let pm = pOppBeats(a, winCl, H, hidden, laterMate[0], trump, cfg);
         /* 队友翻回来之后还要顶住后面的对手 */
         for (let j = 0; j < laterOpp.length; j++) {
-          pm *= (1 - pOppBeats(a, winCl, H, hidden, laterOpp[j], trump, cfg)) * 0.9;
+          pm *= (1 - pOppBeats(a, winCl, H, hidden, laterOpp[j], trump, cfg)) * cfg.mateLaterFactor;
         }
         pTeam = pm;
       }
@@ -1287,12 +1305,12 @@ function followV2(cfg, view, plays) {
       const total = ptsOnTable + myPts + expLater;
       sc = (2 * pTeam - 1) * total * PS;
     }
-    sc += pTeam * cfg.tempoW * 0.5;
+    sc += pTeam * TEMPOW * 0.5;
     sc += lastTrickSwing(cfg, view, L, pTeam);
 
     let spent = 0;
     for (let j = 0; j < cd.length; j++) spent += cardValue(a, cd[j], trump, cfg);
-    sc -= (1 - pTeam) * spent * cfg.lossW;
+    sc -= (1 - pTeam) * spent * LOSSW;
     sc -= spent * cfg.overkillW;
     sc -= structCost(cfg, a, view, cd, trump);
 
