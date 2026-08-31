@@ -27,9 +27,8 @@ const rows = [
   timeBot('template', B.template), timeBot('naive', B.naive), timeBot('greedy', B.greedy),
   timeBot('pointHog', B.pointHog),
   timeBot('本AI(当前,<=3)', () => S.makeAI()),
-  timeBot('smart<=5 K8M4', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 5, rolloutK: 8, rolloutM: 4 })),
-  timeBot('smart<=5 K6M4', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 5, rolloutK: 6, rolloutM: 4 })),
-  timeBot('smart<=6 K8M4', () => S.makeAI({ rolloutSmartLead: true, rolloutMaxCards: 6, rolloutK: 8, rolloutM: 4 })),
+  timeBot('fill20', () => S.makeAI({ fillCap: 20 })),
+  timeBot('fill20 cap100', () => S.makeAI({ fillCap: 20, followCap: 100 })),
   timeBot('无rollout', () => S.makeAI({ rollout: false })),
 ];
 const base = rows.find(r => r.name === 'greedy').us;

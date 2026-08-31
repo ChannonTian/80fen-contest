@@ -74,6 +74,7 @@ const DEFAULTS = {
   rolloutKittyPrior: 4,
   rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
+  rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
@@ -123,8 +124,9 @@ const DEFAULTS = {
    * 只有两张,他手上占了一张,我最多再有一张,凑不出对。规则里「只有亮主者
    * 本人能加固」这一条,在同花色 1→2 这件事上其实是被牌数逼出来的。 */
   declSideAceW: 0,           // 副门光牌也算牌力
+  declHyper: false,          // 用超几何期望折算,而不是线性外推
   /* --- 候选集宽度 --- */
-  followCap: 60, fillCap: 12,
+  followCap: 100, fillCap: 30,
   /* --- 对手手牌建模:按已知断门缩小候选池 --- */
   voidAwarePool: true,
   /* --- 对手手牌分布模型:精确手牌张数 + IPF 拟合各家各门的期望张数 --- */
@@ -369,6 +371,14 @@ function onDealV2(cfg, view) {
   }
   const totalRank = rankCnt.S + rankCnt.H + rankCnt.D + rankCnt.C;
   const scale = 25 / n;
+  /* 线性外推 c×25/n 在 n 小的时候严重高估(n=5、c=3 会算成 15,实际期望只有 7.5)。
+   * 正确的是超几何期望:已有 c 张,剩下的 25−n 张里,该类牌还剩 (T−c)/(108−n)。 */
+  const remDraw = 25 - n, unseenAll = 108 - n;
+  const proj = function (have, total) {
+    if (unseenAll <= 0) return have;
+    const p = have + remDraw * (total - have) / unseenAll;
+    return p < have ? have : p;
+  };
 
   if (cfg.reinforce && cur && cur.seat === view.seat && cur.strength === 1 && !view.rebelHappened) {
     if (cur.suit && rankCnt[cur.suit] >= 2) return { suit: cur.suit, strength: 2 };
@@ -390,15 +400,19 @@ function onDealV2(cfg, view) {
     const s = ALLSUITS[i];
     if (rankCnt[s] < 1) continue;
     /* s 做主之后我的主牌张数 = 本门牌 + 其他三门的级数牌 + 王 */
-    const trumpLen = (cnt[s] + (totalRank - rankCnt[s]) + jokers) * scale;
+    const trumpLen = cfg.declHyper
+      ? proj(cnt[s], 26) + proj(totalRank - rankCnt[s], 6) + proj(jokers, 4)
+      : (cnt[s] + (totalRank - rankCnt[s]) + jokers) * scale;
+    const hiP = cfg.declHyper ? proj(hi[s], 3.2) : hi[s] * scale;
+    const jokP = cfg.declHyper ? proj(jokers, 4) : jokers * scale;
     let v = trumpLen * cfg.declTrumpLenW
-      + hi[s] * scale * cfg.declHiW
-      + jokers * scale * cfg.declJokerW
+      + hiP * cfg.declHiW
+      + jokP * cfg.declJokerW
       + (rankCnt[s] >= 2 ? cfg.declPairBonus : 0);
     if (cfg.declSideAceW) {
       let sa = 0;
       for (let j = 0; j < 4; j++) if (ALLSUITS[j] !== s) sa += hi[ALLSUITS[j]];
-      v += sa * scale * cfg.declSideAceW;
+      v += (cfg.declHyper ? proj(sa, 9.6) : sa * scale) * cfg.declSideAceW;
     }
     if (v > bestScore) { bestScore = v; bestSuit = s; }
   }
@@ -1343,6 +1357,7 @@ function quickMove(hands, seat, trump, plays, leadCl, smart) {
   const opts = M.quickFollowOptions(hands[seat], leadCl, trump);
   let pts = 0;
   for (let i = 0; i < plays.length; i++) pts += E.countPoints(plays[i].cards);
+  const nLater = 3 - plays.length;
   const lsig = E.sigOf(leadCl);
   let pBest = leadCl, pWin = plays[0].seat;
   for (let i = 1; i < plays.length; i++) {
@@ -1360,7 +1375,23 @@ function quickMove(hands, seat, trump, plays, leadCl, smart) {
       if (mc.suit === pBest.suit) take = mc.top > pBest.top;
       else if (mc.suit === 'T') take = true;
     }
-    const mine = ((take ? seat : pWin) % 2) === (seat % 2);
+    let mine = ((take ? seat : pWin) % 2) === (seat % 2);
+    /* 我(或队友)现在领先,但后面还有对手没出 —— 在这个世界里查一下压不压得回来 */
+    if (smart === 2 && mine && nLater > 0) {
+      const curCl = take ? mc : pBest;
+      for (let k2 = 1; k2 <= nLater && mine; k2++) {
+        const p = (seat + k2) % 4;
+        if ((p % 2) === (seat % 2)) continue;
+        const sc = E.filterSuit(hands[p], curCl.suit, trump);
+        if (sc.length) {
+          if (E.canBeatComp(sc, curCl, trump)) mine = false;
+        } else if (curCl.suit !== 'T') {
+          const tc = E.filterSuit(hands[p], 'T', trump);
+          if (tc.length && (curCl.type === 'single' ||
+              E.canBeatComp(tc, { type: curCl.type, top: -1, len: curCl.len, cards: curCl.cards }, trump))) mine = false;
+        }
+      }
+    }
     let v = mine ? 40 + (pts + E.countPoints(cd)) * 2 : -E.countPoints(cd) * 3;
     for (let j = 0; j < cd.length; j++) {
       v -= E.ordIdx(cd[j], trump) * 0.3 + (E.effSuit(cd[j], trump) === 'T' ? 2 : 0);
@@ -1433,7 +1464,8 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
       hands[view.seat] = dropIds(hands[view.seat], ids);
       const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
       const ldr = plays ? plays[0].seat : view.seat;
-      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam, cfg.rolloutSmartLead);
+      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam,
+        cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0));
     }
     if (tot > bv) { bv = tot; best = cd; }
   }

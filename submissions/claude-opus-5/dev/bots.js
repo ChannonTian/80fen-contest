@@ -164,7 +164,9 @@ function trumpMiser() {
 
 /* 同门异构:自家 AI 换一批权重,当作「水平相当但风格不同」的对手 */
 function sibling() {
-  const S = require('../strategy.js');
+  /* 用 dev/yardstick/ 的**冻结快照**,不跟着 DEFAULTS 漂移 —— 之前 sibling
+   * 一直在偷偷吸收我自己的改进,把进步量得偏小了。 */
+  const S = require('./yardstick/strategy.js');
   return S.makeAI({
     name: 'sibling',
     /* 固定住,不要跟着 DEFAULTS 漂移 —— 它是长期对照的标尺 */
@@ -179,7 +181,7 @@ function sibling() {
 
 /* 带 rollout 的同门对手(和本 AI 同架构、同强度级别) */
 function siblingR() {
-  const S = require('../strategy.js');
+  const S = require('./yardstick/strategy.js');
   return S.makeAI({
     name: 'siblingR',
     tempoW: 7, lossW: 1.3, overkillW: 0.22, drawTrumpW: 18,
