@@ -377,6 +377,44 @@ function bestShapeFrom(cards, lead, trump) {
   return null;
 }
 
+/* 走子专用的「最废一手」。和 forceLegalFollow 给出同一个牌集合,
+ * 但对两种压倒性常见的情形走快路,完全不碰 Map / decompose / 排序:
+ *   k === 1        —— 领出单张时对子和拖拉机义务都是空的,本门任意一张都合法;
+ *   本门 ≤ k 张    —— 本门必须全出,剩下的从门外挑最废的,义务同样自动满足。
+ * 其余情形回落到通用实现。 */
+function cheapFollow(hand, lead, trump) {
+  const k = lead.cards.length;
+  const suit = lead.suit;
+  let sCount = 0;
+  for (let i = 0; i < hand.length; i++) if (E.effSuit(hand[i], trump) === suit) sCount++;
+
+  if (k === 1) {
+    let best = null, bv = Infinity;
+    const onlySuit = sCount > 0;
+    for (let i = 0; i < hand.length; i++) {
+      if (onlySuit && E.effSuit(hand[i], trump) !== suit) continue;
+      const v = junkScore(hand[i], trump);
+      if (v < bv) { bv = v; best = hand[i]; }
+    }
+    return best ? [best] : forceLegalFollow(hand, lead, trump, null);
+  }
+
+  if (sCount <= k) {
+    const out = [];
+    const rest = [];
+    for (let i = 0; i < hand.length; i++) {
+      if (E.effSuit(hand[i], trump) === suit) out.push(hand[i]); else rest.push(hand[i]);
+    }
+    let needMore = k - out.length;
+    if (needMore > 0) {
+      rest.sort(function (a, b) { return junkScore(a, trump) - junkScore(b, trump); });
+      for (let i = 0; i < rest.length && needMore > 0; i++, needMore--) out.push(rest[i]);
+    }
+    if (out.length === k) return out;
+  }
+  return forceLegalFollow(hand, lead, trump, null);
+}
+
 /* 跟牌:最废的一手 + 最多两手「试图赢下来」的。
  * 走子(rollout)里每次决策会调上千次,所以这里每个选项都做到**构造即合法**,
  * 一次 isLegalFollow 都不调:
@@ -385,7 +423,7 @@ function bestShapeFrom(cards, lead, trump) {
  *   - 本门全断时,整手都从主牌出 → chosenInSuit = 0 = min(k, 0),三条义务全空;
  *   - 送分那一手,本门有牌就必须从本门挑。 */
 function quickFollowOptions(hand, lead, trump) {
-  const out = [forceLegalFollow(hand, lead, trump, null)];
+  const out = [cheapFollow(hand, lead, trump)];
   const k = lead.cards.length;
   const S = E.filterSuit(hand, lead.suit, trump);
   if (S.length >= k) {
@@ -438,7 +476,7 @@ function quickLeadOptions(hand, trump) {
 
 module.exports = {
   bySuit, pairsAndSingles, junkScore, combos, bestShapeFrom,
-  quickFollowOptions, quickLeadOptions,
+  quickFollowOptions, quickLeadOptions, cheapFollow,
   forceLegalLead, forceLegalFollow,
   genLeadCandidates, genThrowCandidates, genFollowCandidates, genFills,
 };

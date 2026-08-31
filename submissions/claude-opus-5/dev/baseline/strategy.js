@@ -68,12 +68,12 @@ const DEFAULTS = {
   cvRuffAware: 0.8,
   /* --- 残局采样走子:对静态分最高的几个候选,采样若干个一致的世界走到底再比 --- */
   rollout: true,
-  rolloutMaxCards: 3,        // 手牌 ≤ 这个数才开
-  rolloutK: 12,              // 采样几个世界
-  rolloutM: 6,               // 只精算静态分最高的几个候选
+  rolloutMaxCards: 5,        // 手牌 ≤ 这个数才开
+  rolloutK: 6,              // 采样几个世界
+  rolloutM: 4,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
   rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
-  rolloutSmartLead: false,   // 走子时的领出用「这个世界里压不压得住」来判断
+  rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   /* --- evalV2:基于「本墩期望得分 × 赢的概率」的 EV 模型 --- */
   evalV2: true,
   ptsPerCardLater: 2.0,      // 后手每张牌平均带来的分
