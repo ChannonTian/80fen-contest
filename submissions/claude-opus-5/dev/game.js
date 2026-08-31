@@ -313,8 +313,10 @@ function playRound(cfg) {
 
     const r = E.resolveTrick(plays, trump);
     teamPts[r.winner % 2] += r.points;
+    var _lp = E.countPoints(plays[0].cards);
     trickLog.push({ t: t, leader: plays[0].seat, winner: r.winner, points: r.points,
-      suit: lead.suit, size: lead.cards.length, type: lead.type });
+      suit: lead.suit, size: lead.cards.length, type: lead.type,
+      leadPts: _lp, otherPts: r.points - _lp, leaderWon: (r.winner % 2) === (plays[0].seat % 2) });
     leader = r.winner;
     lastWinner = r.winner;
     lastLeadSize = lead.cards.length;
