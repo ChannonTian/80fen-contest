@@ -52,8 +52,8 @@ const DEFAULTS = {
   declTempoW: 0, defTempoW: 0,        // 0 = 沿用 tempoW
   mateLaterFactor: 0.9,               // 队友翻回来之后还要顶住后面对手的折扣
   /* --- 动态先手价值:手上没赢张的时候,拿到领出权反而是负担 --- */
-  dynTempo: false,
-  dynTempoFloor: -0.5,       // 出完之后一张赢张都没有时,先手价值的倍率
+  dynTempo: true,
+  dynTempoFloor: 0,       // 出完之后一张赢张都没有时,先手价值的倍率
   dynTempoFull: 2,           // 有几张赢张就算「先手值钱」
   /* --- 分牌的时间价值:留到最后的分牌基本上都会被逼出来送给对方,
    *     所以越到后面,把分垫掉的代价越小 --- */
@@ -85,6 +85,11 @@ const DEFAULTS = {
   overkillW: 0.10,           // 同样能赢时偏好便宜的牌
   drawTrumpW: 10,            // 抽主奖励
   safeThrowOnly: true,       // 只甩每一组都是光牌的
+  /* §D 的 checkThrow 只看别家**手上**有没有更大的,底牌里的不算。
+   * 但我的 beatersLeft 把底牌也算成暗牌 —— 作为闲家我因此偏保守。
+   * 甩牌失败只是被迫出最小的一组、不罚分,所以容一两张「可能在底牌里」的压制牌
+   * 也许是划算的。 */
+  throwMaxBeaters: 0,
   noThrow: false,            // 完全不甩牌
   maxSafeThrow: false,       // 额外生成「本门所有光牌组件」的最大安全甩牌
   throwBonus: 60,            // 甩牌额外加权
@@ -1534,10 +1539,10 @@ function leadV2(cfg, view) {
         let allSure = true;
         for (let j = 0; j < cl.comps.length; j++) {
           const c = cl.comps[j];
-          const sure = c.type === 'single'
-            ? beatersLeft(a, c.cards[0], trump) === 0
-            : pairBeatersLeft(a, c.top, cl.suit, trump) === 0;
-          if (!sure) { allSure = false; break; }
+          const nb = c.type === 'single'
+            ? beatersLeft(a, c.cards[0], trump)
+            : pairBeatersLeft(a, c.top, cl.suit, trump);
+          if (nb > cfg.throwMaxBeaters) { allSure = false; break; }
         }
         if (!allSure) continue;
       }
