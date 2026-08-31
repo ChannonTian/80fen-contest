@@ -377,20 +377,27 @@ function bestShapeFrom(cards, lead, trump) {
   return null;
 }
 
-/* 跟牌:最废的一手 + 最多两手「试图赢下来」的 */
+/* 跟牌:最废的一手 + 最多两手「试图赢下来」的。
+ * 走子(rollout)里每次决策会调上千次,所以这里每个选项都做到**构造即合法**,
+ * 一次 isLegalFollow 都不调:
+ *   - 本门够张时,bestShapeFrom 取的是本门里同形状的一组 → 张数、对子数、
+ *     拖拉机三条都自然满足;
+ *   - 本门全断时,整手都从主牌出 → chosenInSuit = 0 = min(k, 0),三条义务全空;
+ *   - 送分那一手,本门有牌就必须从本门挑。 */
 function quickFollowOptions(hand, lead, trump) {
   const out = [forceLegalFollow(hand, lead, trump, null)];
   const k = lead.cards.length;
   const S = E.filterSuit(hand, lead.suit, trump);
   if (S.length >= k) {
     const w = bestShapeFrom(S, lead, trump);
-    if (w && w.length === k && E.isLegalFollow(hand, lead, w, trump, null)) out.push(w);
+    if (w && w.length === k) out.push(w);
   } else if (S.length === 0 && lead.suit !== 'T') {
     const T = E.filterSuit(hand, 'T', trump);
     const w = bestShapeFrom(T, lead, trump);
-    if (w && w.length === k && E.isLegalFollow(hand, lead, w, trump, null)) out.push(w);
+    if (w && w.length === k) out.push(w);
   }
-  /* 队友赢的时候把分垫出去 */
+  /* 队友赢的时候把分垫出去。这一手不是构造即合法的(可能藏了本门),
+   * 所以保留校验;试过改成「本门有牌就从本门挑」,量到 −1.7σ,退回。 */
   if (k === 1) {
     let pt = null, pv = -1;
     for (let i = 0; i < hand.length; i++) {

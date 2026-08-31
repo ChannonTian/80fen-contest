@@ -144,7 +144,34 @@ rollout 的价值恰恰在于**推翻**静态分的明显偏好,不在于打破�
 
 ## 下一步的候选(按优先级)
 
-1. 走子策略再提速 → 在同样时间预算下把 rollout 推到 ≤4/≤5(现成 +0.010~+0.023)
-2. lead 的多墩计划(长套建立、抽主计划)—— 试过三个便宜的代理,全部无效,
-   可能需要真的搜索
-3. 扣底:杠杆只有 0.04,但九种改法全输,说明现在这版意外地好,值得搞清楚为什么
+1. **走子策略再提速** → 在同样时间预算下把 rollout 推到 ≤4/≤5。
+   增益是现成量好的:`{rolloutSmartLead:true, rolloutMaxCards:4}` = +0.010(2.4σ),
+   `{..., rolloutMaxCards:5}` = +0.023(4.1σ)。**只差时间。**
+   已经做过一轮:`quickFollowOptions` 里两个「构造即合法」的选项去掉了 isLegalFollow
+   校验(抽查 4952 手,0 手不合法),但当前 ≤3 的配置下省不下多少。
+   下一个热点是 `forceLegalFollow`(每次走子都调,内部有 decompose + 两次排序)。
+2. lead 的多墩计划(长套建立、抽主计划)—— 试过三个便宜的代理(longSuitW /
+   dynTempo / drawTrumpPerCard),全部无效,可能只能靠真搜索。
+3. 扣底:杠杆只有 0.04,但九种改法全输给现在这版简单启发式。
+   值得搞清楚它为什么这么难被超过 —— 大概率是「按 ordIdx 细分废牌」这一项在起作用。
+
+## 会话中断后怎么接着干
+
+1. `cd submissions/claude-opus-5`
+2. `node dev/engine-tests.js` —— 必须 98/98
+3. `node dev/calib.js` —— 跑分器零点校准,配对差值必须恰好 0
+4. `node dev/bench.js 400` —— 对七个参照选手的当前实力
+5. 改动流程:改 `strategy.js` 里加一个**默认关**的开关 →
+   `node dev/sweep.js 1500 '[{"name":"X","cfg":{"X":true}}]'` 筛 →
+   ≥2σ 就到 n≥2500 复测 → 过了才把默认值打开 →
+   `cp strategy.js moves.js engine.js dev/baseline/` → 记进本文件
+6. **纯提速类改动**必须用 `roundArena(当前, dev/baseline)` 验到行为差异恰好 0%
+
+## 交付状态
+
+- 提交件:`index.js` / `engine.js` / `moves.js` / `strategy.js`(只依赖 JS 内建,
+  互相之间用相对 require;已扫过 Math.random / process / fs / Date / eval / 网络,全无)
+- 隔离验收:把四个文件单独拷到空目录,只 `require('./index.js')`,
+  工厂不收参数、五个方法可调、**传冻结的 view 不会被改动**
+- 合规:140 场整场、4030 局,零异常、零违规、零罚分
+- 耗时:29.7µs / 次决策,一场约 89ms(对照:greedy 8.9µs,不带 rollout 的自己 18.1µs)
