@@ -1,0 +1,12 @@
+'use strict';
+const A = require('./arena.js');
+const cur = require('../strategy.js');
+const base = require('./baseline/strategy.js');
+const n = parseInt(process.argv[2] || '400', 10);
+const cfgA = process.argv[3] ? JSON.parse(process.argv[3]) : null;
+const cfgB = process.argv[4] ? JSON.parse(process.argv[4]) : null;
+const fa = () => cur.makeAI(cfgA);
+const fb = () => base.makeAI(cfgB);
+const t0 = Date.now();
+const r = A.roundArena(fa, fb, n, 1);
+console.log(A.fmt(r, '当前 vs baseline'), '| ' + (Date.now() - t0) + 'ms');
