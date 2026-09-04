@@ -1368,6 +1368,20 @@ function sampleWorlds(a, view, cfg, kOverride) {
   return out;
 }
 
+/* 原地删掉这一手打出去的牌。走子里 H 本来就是 hands0[i].slice() 的私有拷贝,
+ * cd 最多几张 —— 原来每走一步要新建一个 Set 加一个新数组,而残局 rollout
+ * 一次决策要走几百步。往前扫比建 Set 便宜,而且完全不分配。 */
+function dropInPlace(hand, cd) {
+  let w = 0;
+  for (let i = 0; i < hand.length; i++) {
+    let hit = false;
+    for (let j = 0; j < cd.length; j++) if (cd[j].id === hand[i].id) { hit = true; break; }
+    if (!hit) hand[w++] = hand[i];
+  }
+  hand.length = w;
+  return hand;
+}
+
 function dropIds(hand, idset) {
   const out = [];
   for (let i = 0; i < hand.length; i++) if (!idset.has(hand[i].id)) out.push(hand[i]);
@@ -1465,9 +1479,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
       const cd = quickMove(H, seat, trump, cur, lead, smart, rich);
-      const ids = new Set();
-      for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
-      H[seat] = dropIds(H[seat], ids);
+      dropInPlace(H[seat], cd);
       cur.push({ seat: seat, cards: cd });
     }
     const r = E.resolveTrick(cur, trump);
@@ -1476,9 +1488,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
     ldr = r.winner;
     if (H[ldr].length === 0) break;
     const lc = quickMove(H, ldr, trump, [], null, smart, rich);
-    const ids2 = new Set();
-    for (let i = 0; i < lc.length; i++) ids2.add(lc[i].id);
-    H[ldr] = dropIds(H[ldr], ids2);
+    dropInPlace(H[ldr], lc);
     lead = E.classify(lc, trump);
     cur = [{ seat: ldr, cards: lc }];
   }
@@ -1522,12 +1532,8 @@ function truncPlayout(hands0, trump, plays0, leader, myTeam, maxTricks, a, cfg, 
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
       const cd = quickMove(H, seat, trump, cur, lead, cfg.rolloutSmartLead ? 1 : 0, false);
-      const ids = new Set();
-      for (let i = 0; i < cd.length; i++) {
-        ids.add(cd[i].id);
-        spent[seat % 2] += cardValue(a, cd[i], trump, cfg);
-      }
-      H[seat] = dropIds(H[seat], ids);
+      for (let i = 0; i < cd.length; i++) spent[seat % 2] += cardValue(a, cd[i], trump, cfg);
+      dropInPlace(H[seat], cd);
       cur.push({ seat: seat, cards: cd });
     }
     const r = E.resolveTrick(cur, trump);
@@ -1537,12 +1543,8 @@ function truncPlayout(hands0, trump, plays0, leader, myTeam, maxTricks, a, cfg, 
     if (H[ldr].length === 0) break;
     if (done >= maxTricks) break;
     const lc = quickMove(H, ldr, trump, [], null, cfg.rolloutSmartLead ? 1 : 0, false);
-    const ids2 = new Set();
-    for (let i = 0; i < lc.length; i++) {
-      ids2.add(lc[i].id);
-      spent[ldr % 2] += cardValue(a, lc[i], trump, cfg);
-    }
-    H[ldr] = dropIds(H[ldr], ids2);
+    for (let i = 0; i < lc.length; i++) spent[ldr % 2] += cardValue(a, lc[i], trump, cfg);
+    dropInPlace(H[ldr], lc);
     lead = E.classify(lc, trump);
     cur = [{ seat: ldr, cards: lc }];
   }

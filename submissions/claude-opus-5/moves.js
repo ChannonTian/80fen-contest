@@ -325,13 +325,14 @@ function genFollowCandidates(hand, lead, trump, opts, cap, fillCap) {
   const fills = genFills(rest, j, trump, fillCap, lead);
   const out = [];
   const seen = new Set();
+  const ctx = E.followCtx(hand, lead, trump);   // 候选之间不变的部分,只算一次
   for (let a = 0; a < parts.length; a++) {
     for (let b = 0; b < fills.length; b++) {
       const cand = parts[a].concat(fills[b]);
       if (cand.length !== k) continue;
       const key = cand.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
       if (seen.has(key)) continue;
-      if (!E.isLegalFollow(hand, lead, cand, trump, opts)) continue;
+      if (!E.isLegalFollow(hand, lead, cand, trump, opts, ctx)) continue;
       seen.add(key);
       out.push(cand);
       if (out.length >= cap) return out;

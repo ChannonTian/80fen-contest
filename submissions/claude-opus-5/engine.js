@@ -185,35 +185,50 @@ function filterSuit(cards, suit, trump) {
 
 const DEFAULT_OPTS = { strictTractorFollow: true, partialTractorFollow: true };
 
-function isLegalFollow(hand, lead, chosen, trump, opts) {
+/* 可选的预算上下文。这四样只依赖 (手牌, 领出的牌, 主) —— 在候选之间完全不变,
+ * 而 genFollowCandidates 会对每个候选调一次 isLegalFollow,等于把整只手牌的
+ * id Set、filterSuit、countPairsIn、longestTractor 各重算了几十遍。
+ * 不传 ctx 时行为与原来一字不差(§S5 的向量就是不传的)。 */
+function followCtx(hand, lead, trump) {
+  const handIds = new Set();
+  for (let i = 0; i < hand.length; i++) handIds.add(hand[i].id);
+  const suitInHand = filterSuit(hand, lead.suit, trump);
+  return {
+    handIds: handIds, suitInHand: suitInHand,
+    pairsInHand: countPairsIn(suitInHand),
+    longest: longestTractor(suitInHand, trump),
+  };
+}
+
+function isLegalFollow(hand, lead, chosen, trump, opts, ctx) {
   const o = opts || DEFAULT_OPTS;
   const strict = o.strictTractorFollow !== false;
   const partial = strict && o.partialTractorFollow !== false;
 
   if (!chosen || chosen.length !== lead.cards.length) return false;
 
-  const handIds = new Set();
-  for (let i = 0; i < hand.length; i++) handIds.add(hand[i].id);
-  const seen = new Set();
+  const cx = ctx || followCtx(hand, lead, trump);
+  const handIds = cx.handIds;
   for (let i = 0; i < chosen.length; i++) {
     const id = chosen[i].id;
-    if (seen.has(id)) return false;
-    seen.add(id);
+    /* 原来用一个 seen Set 查重复。chosen 最多八张,往前扫比建 Set 便宜,
+     * 且判定顺序照旧:先查与前面重复,再查是否在手里。 */
+    for (let j = 0; j < i; j++) if (chosen[j].id === id) return false;
     if (!handIds.has(id)) return false;
   }
 
-  const suitInHand = filterSuit(hand, lead.suit, trump);
+  const suitInHand = cx.suitInHand;
   const chosenInSuit = filterSuit(chosen, lead.suit, trump);
   if (chosenInSuit.length !== Math.min(lead.cards.length, suitInHand.length)) return false;
 
   const need = needPairs(lead);
   if (need > 0) {
-    const must = Math.min(need, countPairsIn(suitInHand));
+    const must = Math.min(need, cx.pairsInHand);
     if (countPairsIn(chosenInSuit) < must) return false;
   }
 
   if (strict && lead.type === 'tractor') {
-    const m = longestTractor(suitInHand, trump);
+    const m = cx.longest;
     const cm = longestTractor(chosenInSuit, trump);
     if (m >= lead.len && cm < lead.len) return false;
     if (partial && m >= 2 && m < lead.len && cm < m) return false;
@@ -414,7 +429,7 @@ function cutValue(c) {
 module.exports = {
   SUITS, SUIT_ORDER, cardPoints, countPoints, makeDeck,
   effSuit, ordIdx, decompose, classify, sigOf, compSig,
-  countPairsIn, needPairs, longestTractor, filterSuit, isLegalFollow,
+  countPairsIn, needPairs, longestTractor, filterSuit, isLegalFollow, followCtx,
   resolveTrick, canBeatComp, checkThrow, smallestComp,
   scoreRound, clampAtGate, advanceMatch,
   declarationOf, canOverride, canReinforce, declAllowed, canFullRebel, cutValue,
