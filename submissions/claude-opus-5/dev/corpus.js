@@ -41,12 +41,26 @@ function replay(factory, seqs) {
   }
   return calls;
 }
+/* 轮数按累计 CPU 时间自适应,而不是定死。便宜的选手一批只有几十毫秒,固定
+ * 轮数下粒度和预热都摊不掉 —— greedy(冻结)因此在 11.15~14.20µs 之间跳,
+ * 而它是分母,直接决定倍数可不可信。跑够 MIN_US 再停,贵的选手轮数自然少。 */
+const MIN_US = 1.2e6;
+function once(factory, seqs, reps) {
+  const t0 = process.cpuUsage(); let calls = 0, r = 0, used = 0;
+  while (r < 400 && (r < reps || used < MIN_US)) {
+    calls += replay(factory, seqs); r++;
+    const d = process.cpuUsage(t0); used = d.user + d.system;
+  }
+  return used / calls;
+}
+/* 两层:内层按累计 CPU 时间自适应轮数(便宜的选手一批只有几十毫秒,固定轮数
+ * 下预热和粒度都摊不掉 —— 之前 greedy 因此虚高到 11~14µs);外层取三次的
+ * 最小值(观测 = 真实 + 非负噪声)。两头都要,否则噪声只是从分母搬到分子。 */
 function cost(factory, seqs, reps) {
-  replay(factory, seqs);                       // JIT 热身
-  const t0 = process.cpuUsage(); let calls = 0;
-  for (let r = 0; r < reps; r++) calls += replay(factory, seqs);
-  const d = process.cpuUsage(t0);
-  return (d.user + d.system) / calls;
+  replay(factory, seqs); replay(factory, seqs);   // JIT 热身
+  let best = Infinity;
+  for (let k = 0; k < 3; k++) best = Math.min(best, once(factory, seqs, reps));
+  return best;
 }
 
 const N = parseInt(process.argv[2] || '40', 10);
