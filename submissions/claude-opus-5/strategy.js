@@ -1191,14 +1191,19 @@ function lastTrickSwing(cfg, view, L, pWin) {
 
 /* 出掉这一手之后,手牌结构受了多少损伤 */
 /* 每次决策只算一次的手牌摘要 */
+/* (花色,点数) -> 0..84 的整数编码。原来用 suit + '/' + rank 的字符串键,
+ * 每张牌一次字符串拼接 + 一次 Map 查找,在候选循环里被跑上千次。编码是
+ * 单射,所以换成定长表之后计数逐位相同。 */
+const SUITCODE = { S: 0, H: 1, D: 2, C: 3, X: 4 };
+function ccode(card) { return SUITCODE[card.suit] * 17 + card.rank; }
+
 function handSummary(view, trump) {
   const hand = view.hand;
-  const inHand = new Map();
+  const inHand = new Int8Array(96);
   const suitCnt = {};
   let nTrump = 0;
   for (let i = 0; i < hand.length; i++) {
-    const k = hand[i].suit + '/' + hand[i].rank;
-    inHand.set(k, (inHand.get(k) || 0) + 1);
+    inHand[ccode(hand[i])]++;
     const es = E.effSuit(hand[i], trump);
     if (es === 'T') nTrump++; else suitCnt[es] = (suitCnt[es] || 0) + 1;
   }
@@ -1211,14 +1216,14 @@ function structCost(cfg, a, view, cd, trump, hsum) {
   let cost = 0;
   if (cfg.breakPairW) {
     const inHand = hsum ? hsum.inHand : handSummary(view, trump).inHand;
-    const inPlay = new Map();
+    /* 「这一手里只出了一张、但手上还有一对」的每个键计一次。cd 最多八张,
+     * 直接两重扫描,和原来建 Map 再 forEach 的结果相同,但不分配。 */
     for (let i = 0; i < cd.length; i++) {
-      const k = cd[i].suit + '/' + cd[i].rank;
-      inPlay.set(k, (inPlay.get(k) || 0) + 1);
+      const k = ccode(cd[i]);
+      let n = 0;
+      for (let j = 0; j < cd.length; j++) if (ccode(cd[j]) === k) n++;
+      if (n === 1 && inHand[k] >= 2) cost += cfg.breakPairW;
     }
-    inPlay.forEach(function (v, k) {
-      if (v === 1 && inHand.get(k) >= 2) cost += cfg.breakPairW;
-    });
     if (cfg.breakTractorW) {
       /* 出掉之后,本门最长拖拉机短了多少 */
       const es = E.effSuit(cd[0], trump);
