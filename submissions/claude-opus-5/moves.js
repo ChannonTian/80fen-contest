@@ -3,6 +3,11 @@
  * genFollowCandidates / genLeadCandidates 给策略层挑选。
  */
 'use strict';
+
+/* genFollowCandidates 的临时表:id -> 手牌下标。只写手牌用到的槽位,
+ * 只读 cand 里的牌(必是手牌的子集),所以陈旧槽位永远读不到,不用清零。
+ * 该函数不会被重入(它调用的几个函数都不回头调它)。 */
+const IDX = new Int8Array(108);
 const E = require('./engine.js');
 
 const DEF = { strictTractorFollow: true, partialTractorFollow: true };
@@ -326,12 +331,30 @@ function genFollowCandidates(hand, lead, trump, opts, cap, fillCap) {
   const out = [];
   const seen = new Set();
   const ctx = E.followCtx(hand, lead, trump);   // 候选之间不变的部分,只算一次
+  /* 去重键:原来是 cand.map(id).sort().join(',') —— 每个候选两个数组、两个
+   * 闭包、一个字符串。parts 取自领出花色、fills 取自其余花色,构造上不相交,
+   * 所以候选里没有重复牌;手牌至多 25 张,用「手牌下标位掩码」做键是单射的。
+   * 而且键能由 parts/fills 各自的掩码或出来,在 concat 之前就判掉重复。 */
+  /* 位掩码只在下标 <32 时可靠。跟牌阶段手牌至多 25 张,但庄家扣底时手上有
+   * 33 张 —— 万一将来在别处调用,回绕会**静默地少去重**,丢掉合法候选而不
+   * 报错。所以超了就退回原来的字符串键。 */
+  const useMask = hand.length <= 31;
+  for (let i = 0; i < hand.length; i++) IDX[hand[i].id] = i;
+  const pk = [], fk = [];
+  if (useMask) {
+    for (let a = 0; a < parts.length; a++) { let m = 0;
+      for (let i = 0; i < parts[a].length; i++) m |= (1 << IDX[parts[a][i].id]); pk.push(m); }
+    for (let b = 0; b < fills.length; b++) { let m = 0;
+      for (let i = 0; i < fills[b].length; i++) m |= (1 << IDX[fills[b][i].id]); fk.push(m); }
+  }
   for (let a = 0; a < parts.length; a++) {
     for (let b = 0; b < fills.length; b++) {
-      const cand = parts[a].concat(fills[b]);
-      if (cand.length !== k) continue;
-      const key = cand.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
+      if (parts[a].length + fills[b].length !== k) continue;
+      const key = useMask ? (pk[a] | fk[b])
+        : parts[a].concat(fills[b]).map(function (c) { return c.id; })
+            .sort(function (x, y) { return x - y; }).join(',');
       if (seen.has(key)) continue;
+      const cand = parts[a].concat(fills[b]);
       if (!E.isLegalFollow(hand, lead, cand, trump, opts, ctx)) continue;
       seen.add(key);
       out.push(cand);
