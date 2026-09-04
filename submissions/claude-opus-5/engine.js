@@ -76,6 +76,18 @@ let _stamp = 0;
 const _seen = new Int32Array(96);     // 版本戳,免去每次清零
 
 function decompose(cards, trump) {
+  /* 两张牌的快路径。这是最常见的形状(对子、两张的跟牌),而通用路径要建
+   * glist、每组一个数组、pairs/singles/comps/run 五个数组外加每个组件一个
+   * 带嵌套数组的对象。下面两支的输出与通用路径逐位同形(含 cards 是新数组
+   * 这一点,通用路径里是 runToComp 的 .slice())。 */
+  if (cards.length === 2) {
+    const c0 = cards[0], c1 = cards[1];
+    if (c0.suit === c1.suit && c0.rank === c1.rank) {
+      return [{ type: 'pair', cards: [c0, c1], top: ordIdx(c0, trump) }];
+    }
+    return [{ type: 'single', cards: [c0], top: ordIdx(c0, trump) },
+            { type: 'single', cards: [c1], top: ordIdx(c1, trump) }];
+  }
   const glist = [];
   /* 版本戳存在 Int32Array 里,超过 2^31 会回绕,比较就失效。一场联赛
    * decompose 能被调上千万次,所以必须有回绕保护 —— 代价是每 20 亿次
@@ -132,8 +144,15 @@ function classify(cards, trump) {
 /* 结构签名 —— 组件类型的多重集合(§E) */
 function compSig(c) { return c.type === 'tractor' ? 'tractor' + c.len : c.type; }
 
+/* sigOf 的返回值在全代码里**只用于相等比较**(=== / !==),从不存储、打印或和
+ * 字面量比 —— 所以非甩牌的情况可以返回整数,省掉 'tractor' + len 的字符串拼接。
+ * 甩牌仍需要一个多重集签名,保持字符串;整数和字符串在 === 下永不相等,
+ * 而它们本来也代表不同的结构,所以判定逐位不变。 */
 function sigOf(cl) {
   if (!cl) return null;
+  if (cl.type === 'single') return 1;
+  if (cl.type === 'pair') return 2;
+  if (cl.type === 'tractor') return 100 + cl.len;
   if (cl.type !== 'throw') return compSig(cl);
   const a = [];
   for (let i = 0; i < cl.comps.length; i++) a.push(compSig(cl.comps[i]));
