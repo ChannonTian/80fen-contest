@@ -171,6 +171,8 @@ const DEFAULTS = {
  *  1) 断门/得分按「完整墩」增量累计,不重扫整个 history
  *  2) 把「某门里比某个序号大的暗牌有几张」预先做成 O(1) 查表
  * 缓存挂在 AI 实例上(cache 参数),history 变短即认为换了一局。 */
+const ANKEYS = ['T', 'S', 'H', 'D', 'C'];
+
 function analyze(view, cache) {
   const trump = view.trump || { suit: null, rank: view.trumpRank };
   const hist = view.history;
@@ -180,6 +182,19 @@ function analyze(view, cache) {
     C = { histLen: 0, nTricks: 0, voids: [{}, {}, {}, {}], teamPts: [0, 0],
           histSeen: new Int8Array(85), hsizePlayed: [0, 0, 0, 0],
           rank: trump.rank, tsuit: trump.suit, seat: view.seat };
+    /* 同一局里主是固定的(缓存的失效条件已经包含主的花色和点数),所以
+     * (花色,点数) -> (有效门, 序号) 的映射整局不变。原来每次决策都要新建
+     * 67 个 probe 小对象、调 134 次 effSuit/ordIdx —— 这里一次算完存起来。 */
+    C.esIdx = new Int8Array(85); C.ordOf = new Int8Array(85);
+    for (let si = 0; si < 5; si++) {
+      const suit = si === 4 ? 'X' : ALLSUITS[si];
+      const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
+      for (let r = lo; r <= hi; r++) {
+        const probe = { suit: suit, rank: r, id: -1 };
+        C.esIdx[si * 17 + r] = ANKEYS.indexOf(E.effSuit(probe, trump));
+        C.ordOf[si * 17 + r] = E.ordIdx(probe, trump);
+      }
+    }
     if (cache) { cache.reset = true; }
   }
   /* 增量吃掉新出现的手 */
@@ -218,7 +233,7 @@ function analyze(view, cache) {
   for (let i = 0; i < bk.length; i++) unseen[keyOf(bk[i])]--;
 
   /* O(1) 查表:above[门][序号] = 该门里序号更大的暗牌张数 */
-  const KEYS = ['T', 'S', 'H', 'D', 'C'];
+  const KEYS = ANKEYS;
   const above = {}, pairAbove = {}, suitTot = {};
   for (let i = 0; i < 5; i++) { above[KEYS[i]] = new Int16Array(17); pairAbove[KEYS[i]] = new Int16Array(17); suitTot[KEYS[i]] = 0; }
   let hiddenTotal = 0;
@@ -230,9 +245,8 @@ function analyze(view, cache) {
       const c = unseen[si * 17 + r];
       if (c <= 0) continue;
       hiddenTotal += c;
-      const probe = { suit: suit, rank: r, id: -1 };
-      const es = E.effSuit(probe, trump);
-      const o = E.ordIdx(probe, trump);
+      const es = KEYS[C.esIdx[si * 17 + r]];
+      const o = C.ordOf[si * 17 + r];
       above[es][o] += c;
       if (c >= 2) pairAbove[es][o] += 1;
       suitTot[es] += c;

@@ -29,7 +29,10 @@ for (const [, f] of cands) timeBot(f, 12, 900);          // JIT 热身
 const acc = cands.map(() => []);
 for (let r = 0; r < R; r++)                              // 交替:每轮所有选手各跑一遍
   for (let i = 0; i < cands.length; i++) acc[i].push(timeBot(cands[i][1], N, r * N));
-const med = a => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+/* 用最小值,不用中位数。容器有 CPU 争用,观测时间 = 真实时间 + 非负噪声,
+ * 所以多轮取最小值才是真实成本的无偏方向估计;中位数会被噪声整体抬高,
+ * 而且抬多少取决于当时的争用强度,导致不同批次之间不可比。 */
+const med = a => Math.min.apply(null, a);
 const us = acc.map(med);
 /* 每轮内配对求比值再取中位数:同一轮里所有选手打的是同一批牌、机器状态也
  * 相近,所以比值把「牌的难易」和「机器漂移」两个方差源都消掉。直接对两列
