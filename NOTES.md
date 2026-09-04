@@ -64,7 +64,7 @@ approx. $6.9 in 2 hours.
 self-evaluated stats:
 
 | 项	| 数值 |
----
+|-|-|
 | 交付文件 |	5 个，共 1659 行（engine 458 / strategy 1066 / NOTES 49 / PROGRESS 76 / index 10）|
 | 开发工具（不交付） |	8 个文件 1386 行（harness 461 / test-s5 293 / bench 179 / rollout 陪练 265 / analyze 77…）+ 6 个 baseline 快照 + 69 个 sweep 变体 |
 | 规则自测 |	§S5 向量 92/92 |
