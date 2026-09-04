@@ -98,6 +98,20 @@ const DEFAULTS = {
    * 约 2.68× 冻结 greedy。**一行回退**:把这四个值改回 0 / 4 / 6 / 4,回到
    * ~2.39×、棋力回到已合并版的水平。 */
   rolloutMargin: 50,
+  /* 连续减半:早轮用很少的世界淘汰明显没戏的候选,把样本留给最后两个。
+   * **量下来赚不到,默认关,代码留档。** 原因是代数的,不是调参没调好:
+   * 等预算分配下决赛候选拿到 budget/2 = m·K/⌈log₂m⌉/2 个世界,而均摊版
+   * 每个候选拿 K 个。要占便宜需要 m > 2·⌈log₂m⌉ —— m=6 时恰好取等号,
+   * 决赛候选拿到的正好也是 8 个世界,一模一样。于是 rolloutSHW 取 16/24/32
+   * 结果**逐位相同**(世界池根本用不到),早轮那些基于 2 个世界的淘汰只会
+   * 丢信息:n=1500 量到 −0.0017。
+   * m 要到 8 以上才开始有赚,但 rolloutM 一旦放大,总预算就撑不住了。
+   *
+   * 附一个教训:第一版用**常数** step(每轮世界数相同),量到 +0.0077(1.6σ),
+   * 一度以为成了 —— 其实那是把最大预算花在候选最多的第一轮上,总走子数
+   * 62 次 vs 均摊版 48 次,**涨的是预算不是算法**。 */
+  rolloutSH: false,
+  rolloutSHW: 16,
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
   rolloutRichLead: false,    // 走子的领出候选补上「每门最小的一张」
@@ -1615,36 +1629,75 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
     if (n < 2) return scored[0].cd;          // 静态分遥遥领先,不必精算
     m = n;
   }
-  const worlds = sampleWorlds(a, view, cfg);
+  const worlds = sampleWorlds(a, view, cfg, cfg.rolloutSH ? (cfg.rolloutSHW || cfg.rolloutK) : 0);
   const trump = a.trump;
   const declTeam = view.declSeat % 2;
   const kp = (view.buriedKnown && view.buriedKnown.length)
     ? E.countPoints(view.buriedKnown) : cfg.rolloutKittyPrior;
-  let best = scored[0].cd, bv = -1e9;
   const smart = cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0);
   const ldr = plays ? plays[0].seat : view.seat;
   const hands = [null, null, null, null];        // 复用:playoutValue 只读它
+
+  /* 每个候选出牌后的手牌与 pl 都不依赖世界,先备好 */
+  const pre = [];
   for (let i = 0; i < m; i++) {
     const cd = scored[i].cd;
     const ids = new Set();
     for (let j = 0; j < cd.length; j++) ids.add(cd[j].id);
-    /* pl 和 ldr 不依赖世界,原来在世界循环里每次重建一个数组加一个对象。 */
-    const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
+    pre.push({
+      cd: cd, ids: ids, cachedSrc: null, cachedAfter: null,
+      pl: plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }],
+    });
+  }
+  function run(i, w) {
+    const e = pre[i], wh = worlds[w], src = wh[view.seat];
     /* 我自己的手牌在每个世界里是同一个数组(sampleWorlds 里 hands[me] =
      * view.hand),所以「出掉这一手之后的手牌」也一样 —— 原来算了 K 遍。
-     * 这里按数组身份缓存:万一以后 sampleWorlds 改成每个世界一份拷贝,
-     * 身份不同就会自然退回逐世界计算,结果仍然正确。 */
-    let cachedSrc = null, cachedAfter = null;
-    let tot = 0;
-    for (let w = 0; w < worlds.length; w++) {
-      const wh = worlds[w];
-      const src = wh[view.seat];
-      if (src !== cachedSrc) { cachedSrc = src; cachedAfter = dropIds(src, ids); }
-      hands[0] = wh[0]; hands[1] = wh[1]; hands[2] = wh[2]; hands[3] = wh[3];
-      hands[view.seat] = cachedAfter;
-      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam, smart, cfg.rolloutRichLead);
+     * 按数组身份缓存:万一以后 sampleWorlds 改成每个世界一份拷贝,身份不同
+     * 就会自然退回逐世界计算,结果仍然正确。 */
+    if (src !== e.cachedSrc) { e.cachedSrc = src; e.cachedAfter = dropIds(src, e.ids); }
+    hands[0] = wh[0]; hands[1] = wh[1]; hands[2] = wh[2]; hands[3] = wh[3];
+    hands[view.seat] = e.cachedAfter;
+    return playoutValue(hands, trump, e.pl, ldr, view.myTeam, kp, declTeam, smart, cfg.rolloutRichLead);
+  }
+
+  if (cfg.rolloutSH) {
+    /* 连续减半:均摊给 m 个候选是浪费 —— 其中几个走两个世界就看得出没戏。
+     * 每一轮所有存活候选都在**同一批世界**上评估(共同随机数),按累计分排序
+     * 淘汰一半,下一轮再往前多铺几个世界。被淘汰的候选不影响后续比较,所以
+     * 任意时刻存活者比较的都是同一个世界前缀 —— 配对性保持,不会因为「有的
+     * 候选运气好抽到容易的世界」而选错。 */
+    const W = worlds.length;
+    const tot = new Float64Array(m);
+    const alive = [];
+    for (let i = 0; i < m; i++) alive.push(i);
+    const nRounds = Math.max(1, Math.ceil(Math.log(m) / Math.LN2));
+    /* 总走子预算对齐均摊版(m × rolloutK),每轮分掉大致相等的一份。
+     * 候选减半时每人能铺的世界数就翻倍 —— 这才是连续减半省钱的地方:
+     * 早轮用很少的世界淘汰明显没戏的,把样本留给最后两个真正接近的。
+     * 每轮固定用同样多的世界数是错的,那等于把最大的预算花在候选最多的
+     * 第一轮上,总量反而超过均摊版。 */
+    const budget = Math.max(1, Math.floor(m * cfg.rolloutK / nRounds));
+    let done = 0;
+    while (alive.length > 1 && done < W) {
+      const per = Math.max(1, Math.floor(budget / alive.length));
+      const upto = Math.min(W, done + per);
+      for (let ai = 0; ai < alive.length; ai++) {
+        const i = alive[ai];
+        for (let w = done; w < upto; w++) tot[i] += run(i, w);
+      }
+      done = upto;
+      alive.sort(function (x, y) { return tot[y] - tot[x]; });
+      alive.length = Math.max(1, Math.ceil(alive.length / 2));
     }
-    if (tot > bv) { bv = tot; best = cd; }
+    return scored[alive[0]].cd;
+  }
+
+  let best = scored[0].cd, bv = -1e9;
+  for (let i = 0; i < m; i++) {
+    let tot = 0;
+    for (let w = 0; w < worlds.length; w++) tot += run(i, w);
+    if (tot > bv) { bv = tot; best = scored[i].cd; }
   }
   return best;
 }
