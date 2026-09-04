@@ -3,16 +3,6 @@
  * genFollowCandidates / genLeadCandidates 给策略层挑选。
  */
 'use strict';
-
-/* genFollowCandidates 的临时表:id -> 手牌下标。只写手牌用到的槽位,
- * 只读 cand 里的牌(必是手牌的子集),所以陈旧槽位永远读不到,不用清零。
- * 该函数不会被重入(它调用的几个函数都不回头调它)。 */
-const IDX = new Int8Array(108);
-/* genFills 的临时表:id -> rest 下标,外加一个版本戳表用来判「这张牌在不在
- * rest 里」。戳存在 Int32Array 里,超过 2^31 会回绕,所以要有回绕保护。 */
-const FIDX = new Int8Array(108);
-const FSEEN = new Int32Array(108);
-let FSTAMP = 0;
 const E = require('./engine.js');
 
 const DEF = { strictTractorFollow: true, partialTractorFollow: true };
@@ -268,32 +258,11 @@ function genFills(rest, j, trump, cap, leadCl) {
   if (j === 0) return [[]];
   const out = [];
   const seen = new Set();
-  /* 去重键:原来是 map(id).sort().join(',') —— 每次 push 两个数组、一个闭包、
-   * 一个字符串。改成「rest 下标位掩码」。掩码只在下标 <32 且每张牌都在 rest
-   * 里时可靠,两个条件任一不成立就退回原来的字符串键(宁可慢,不可静默少去重
-   * —— 丢掉合法候选是不报错的)。 */
-  const canMask = rest.length <= 31;
-  if (canMask) { for (let i = 0; i < rest.length; i++) FIDX[rest[i].id] = i; }
-  if (FSTAMP > 2000000000) { FSEEN.fill(0); FSTAMP = 0; }
-  const fstamp = ++FSTAMP;
-  if (canMask) { for (let i = 0; i < rest.length; i++) FSEEN[rest[i].id] = fstamp; }
   function push(cards) {
     if (!cards || cards.length !== j) return;
-    let key = -1;
-    if (canMask) {
-      let m = 0, ok = true;
-      for (let i = 0; i < cards.length; i++) {
-        const id = cards[i].id;
-        if (FSEEN[id] !== fstamp) { ok = false; break; }
-        m |= (1 << FIDX[id]);
-      }
-      if (ok) key = m;
-    }
-    if (key === -1) {
-      key = cards.map(function (c) { return c.id; }).sort().join(',');
-    }
-    if (seen.has(key)) return;
-    seen.add(key); out.push(cards);
+    const ids = cards.map(function (c) { return c.id; }).sort().join(',');
+    if (seen.has(ids)) return;
+    seen.add(ids); out.push(cards);
   }
   const trumps = [], offs = [];
   for (let i = 0; i < rest.length; i++) {
@@ -356,32 +325,13 @@ function genFollowCandidates(hand, lead, trump, opts, cap, fillCap) {
   const fills = genFills(rest, j, trump, fillCap, lead);
   const out = [];
   const seen = new Set();
-  const ctx = E.followCtx(hand, lead, trump);   // 候选之间不变的部分,只算一次
-  /* 去重键:原来是 cand.map(id).sort().join(',') —— 每个候选两个数组、两个
-   * 闭包、一个字符串。parts 取自领出花色、fills 取自其余花色,构造上不相交,
-   * 所以候选里没有重复牌;手牌至多 25 张,用「手牌下标位掩码」做键是单射的。
-   * 而且键能由 parts/fills 各自的掩码或出来,在 concat 之前就判掉重复。 */
-  /* 位掩码只在下标 <32 时可靠。跟牌阶段手牌至多 25 张,但庄家扣底时手上有
-   * 33 张 —— 万一将来在别处调用,回绕会**静默地少去重**,丢掉合法候选而不
-   * 报错。所以超了就退回原来的字符串键。 */
-  const useMask = hand.length <= 31;
-  for (let i = 0; i < hand.length; i++) IDX[hand[i].id] = i;
-  const pk = [], fk = [];
-  if (useMask) {
-    for (let a = 0; a < parts.length; a++) { let m = 0;
-      for (let i = 0; i < parts[a].length; i++) m |= (1 << IDX[parts[a][i].id]); pk.push(m); }
-    for (let b = 0; b < fills.length; b++) { let m = 0;
-      for (let i = 0; i < fills[b].length; i++) m |= (1 << IDX[fills[b][i].id]); fk.push(m); }
-  }
   for (let a = 0; a < parts.length; a++) {
     for (let b = 0; b < fills.length; b++) {
-      if (parts[a].length + fills[b].length !== k) continue;
-      const key = useMask ? (pk[a] | fk[b])
-        : parts[a].concat(fills[b]).map(function (c) { return c.id; })
-            .sort(function (x, y) { return x - y; }).join(',');
-      if (seen.has(key)) continue;
       const cand = parts[a].concat(fills[b]);
-      if (!E.isLegalFollow(hand, lead, cand, trump, opts, ctx)) continue;
+      if (cand.length !== k) continue;
+      const key = cand.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
+      if (seen.has(key)) continue;
+      if (!E.isLegalFollow(hand, lead, cand, trump, opts)) continue;
       seen.add(key);
       out.push(cand);
       if (out.length >= cap) return out;

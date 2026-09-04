@@ -66,42 +66,18 @@ function runToComp(run) {
   return { type: 'tractor', len: run.length, cards, top: run[run.length - 1].top };
 }
 
-/* (花色,点数) -> 0..84 的整数编码。原来分组用 suit + '/' + rank 字符串键,
- * 每张牌一次拼接一次 Map 查找;decompose 在候选循环里被跑上千次。
- * 下面用「code -> 组下标」的定长表代替 Map,**插入顺序照旧**(singles 的
- * 次序依赖它),所以结果逐位相同。 */
-const DSUIT = { S: 0, H: 1, D: 2, C: 3, X: 4 };
-const _slot = new Int8Array(96);      // 组下标 + 1,0 表示还没建组
-let _stamp = 0;
-const _seen = new Int32Array(96);     // 版本戳,免去每次清零
-
 function decompose(cards, trump) {
-  /* 两张牌的快路径。这是最常见的形状(对子、两张的跟牌),而通用路径要建
-   * glist、每组一个数组、pairs/singles/comps/run 五个数组外加每个组件一个
-   * 带嵌套数组的对象。下面两支的输出与通用路径逐位同形(含 cards 是新数组
-   * 这一点,通用路径里是 runToComp 的 .slice())。 */
-  if (cards.length === 2) {
-    const c0 = cards[0], c1 = cards[1];
-    if (c0.suit === c1.suit && c0.rank === c1.rank) {
-      return [{ type: 'pair', cards: [c0, c1], top: ordIdx(c0, trump) }];
-    }
-    return [{ type: 'single', cards: [c0], top: ordIdx(c0, trump) },
-            { type: 'single', cards: [c1], top: ordIdx(c1, trump) }];
-  }
-  const glist = [];
-  /* 版本戳存在 Int32Array 里,超过 2^31 会回绕,比较就失效。一场联赛
-   * decompose 能被调上千万次,所以必须有回绕保护 —— 代价是每 20 亿次
-   * 清一次 96 字节。 */
-  if (++_stamp > 2000000000) { _seen.fill(0); _stamp = 1; }
+  const groups = new Map();
   for (let i = 0; i < cards.length; i++) {
     const c = cards[i];
-    const k = DSUIT[c.suit] * 17 + c.rank;
-    if (_seen[k] !== _stamp) { _seen[k] = _stamp; _slot[k] = glist.length + 1; glist.push([c]); }
-    else glist[_slot[k] - 1].push(c);
+    const k = c.suit + '/' + c.rank;
+    let g = groups.get(k);
+    if (!g) { g = []; groups.set(k, g); }
+    g.push(c);
   }
   const pairs = [];
   const singles = [];
-  glist.forEach(function (g) {
+  groups.forEach(function (g) {
     let i = 0;
     while (i + 1 < g.length) {
       pairs.push({ cards: [g[i], g[i + 1]], top: ordIdx(g[i], trump) });
@@ -144,15 +120,8 @@ function classify(cards, trump) {
 /* 结构签名 —— 组件类型的多重集合(§E) */
 function compSig(c) { return c.type === 'tractor' ? 'tractor' + c.len : c.type; }
 
-/* sigOf 的返回值在全代码里**只用于相等比较**(=== / !==),从不存储、打印或和
- * 字面量比 —— 所以非甩牌的情况可以返回整数,省掉 'tractor' + len 的字符串拼接。
- * 甩牌仍需要一个多重集签名,保持字符串;整数和字符串在 === 下永不相等,
- * 而它们本来也代表不同的结构,所以判定逐位不变。 */
 function sigOf(cl) {
   if (!cl) return null;
-  if (cl.type === 'single') return 1;
-  if (cl.type === 'pair') return 2;
-  if (cl.type === 'tractor') return 100 + cl.len;
   if (cl.type !== 'throw') return compSig(cl);
   const a = [];
   for (let i = 0; i < cl.comps.length; i++) a.push(compSig(cl.comps[i]));
@@ -162,22 +131,14 @@ function sigOf(cl) {
 
 /* ---------- ⑤ isLegalFollow ---------- */
 
-/* 和 decompose 同样的换法:字符串键 Map -> 版本戳定长表,零分配。
- * 用独立的戳表,免得和 decompose 的互相冲掉(isLegalFollow 里两者交替调用)。
- * 计数:每当某个键的张数凑成偶数就 +1,等价于原来的 sum(floor(v/2))。 */
-const _cSeen = new Int32Array(96);
-const _cCnt = new Int8Array(96);
-let _cStamp = 0;
-
 function countPairsIn(cards) {
-  if (_cStamp > 2000000000) { _cSeen.fill(0); _cStamp = 0; }
-  const st = ++_cStamp;
-  let n = 0;
+  const m = new Map();
   for (let i = 0; i < cards.length; i++) {
-    const k = DSUIT[cards[i].suit] * 17 + cards[i].rank;
-    if (_cSeen[k] !== st) { _cSeen[k] = st; _cCnt[k] = 1; }
-    else { _cCnt[k]++; if ((_cCnt[k] & 1) === 0) n++; }
+    const k = cards[i].suit + '/' + cards[i].rank;
+    m.set(k, (m.get(k) || 0) + 1);
   }
+  let n = 0;
+  m.forEach(function (v) { n += Math.floor(v / 2); });
   return n;
 }
 
@@ -196,9 +157,6 @@ function needPairs(lead) {
 }
 
 function longestTractor(cards, trump) {
-  /* 拖拉机至少两个对子 = 4 张,所以不足 4 张必然返回 0 —— 不必跑一整趟
-   * decompose。isLegalFollow 里 chosenInSuit 常常只有一两张,这条短路很值。 */
-  if (cards.length < 4) return 0;
   const comps = decompose(cards, trump);
   let m = 0;
   for (let i = 0; i < comps.length; i++) {
@@ -215,50 +173,35 @@ function filterSuit(cards, suit, trump) {
 
 const DEFAULT_OPTS = { strictTractorFollow: true, partialTractorFollow: true };
 
-/* 可选的预算上下文。这四样只依赖 (手牌, 领出的牌, 主) —— 在候选之间完全不变,
- * 而 genFollowCandidates 会对每个候选调一次 isLegalFollow,等于把整只手牌的
- * id Set、filterSuit、countPairsIn、longestTractor 各重算了几十遍。
- * 不传 ctx 时行为与原来一字不差(§S5 的向量就是不传的)。 */
-function followCtx(hand, lead, trump) {
-  const handIds = new Set();
-  for (let i = 0; i < hand.length; i++) handIds.add(hand[i].id);
-  const suitInHand = filterSuit(hand, lead.suit, trump);
-  return {
-    handIds: handIds, suitInHand: suitInHand,
-    pairsInHand: countPairsIn(suitInHand),
-    longest: longestTractor(suitInHand, trump),
-  };
-}
-
-function isLegalFollow(hand, lead, chosen, trump, opts, ctx) {
+function isLegalFollow(hand, lead, chosen, trump, opts) {
   const o = opts || DEFAULT_OPTS;
   const strict = o.strictTractorFollow !== false;
   const partial = strict && o.partialTractorFollow !== false;
 
   if (!chosen || chosen.length !== lead.cards.length) return false;
 
-  const cx = ctx || followCtx(hand, lead, trump);
-  const handIds = cx.handIds;
+  const handIds = new Set();
+  for (let i = 0; i < hand.length; i++) handIds.add(hand[i].id);
+  const seen = new Set();
   for (let i = 0; i < chosen.length; i++) {
     const id = chosen[i].id;
-    /* 原来用一个 seen Set 查重复。chosen 最多八张,往前扫比建 Set 便宜,
-     * 且判定顺序照旧:先查与前面重复,再查是否在手里。 */
-    for (let j = 0; j < i; j++) if (chosen[j].id === id) return false;
+    if (seen.has(id)) return false;
+    seen.add(id);
     if (!handIds.has(id)) return false;
   }
 
-  const suitInHand = cx.suitInHand;
+  const suitInHand = filterSuit(hand, lead.suit, trump);
   const chosenInSuit = filterSuit(chosen, lead.suit, trump);
   if (chosenInSuit.length !== Math.min(lead.cards.length, suitInHand.length)) return false;
 
   const need = needPairs(lead);
   if (need > 0) {
-    const must = Math.min(need, cx.pairsInHand);
+    const must = Math.min(need, countPairsIn(suitInHand));
     if (countPairsIn(chosenInSuit) < must) return false;
   }
 
   if (strict && lead.type === 'tractor') {
-    const m = cx.longest;
+    const m = longestTractor(suitInHand, trump);
     const cm = longestTractor(chosenInSuit, trump);
     if (m >= lead.len && cm < lead.len) return false;
     if (partial && m >= 2 && m < lead.len && cm < m) return false;
@@ -459,7 +402,7 @@ function cutValue(c) {
 module.exports = {
   SUITS, SUIT_ORDER, cardPoints, countPoints, makeDeck,
   effSuit, ordIdx, decompose, classify, sigOf, compSig,
-  countPairsIn, needPairs, longestTractor, filterSuit, isLegalFollow, followCtx,
+  countPairsIn, needPairs, longestTractor, filterSuit, isLegalFollow,
   resolveTrick, canBeatComp, checkThrow, smallestComp,
   scoreRound, clampAtGate, advanceMatch,
   declarationOf, canOverride, canReinforce, declAllowed, canFullRebel, cutValue,

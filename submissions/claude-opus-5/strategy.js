@@ -72,10 +72,10 @@ const DEFAULTS = {
   cvRuffAware: 0.8,
   /* --- 残局采样走子:对静态分最高的几个候选,采样若干个一致的世界走到底再比 --- */
   rollout: true,
-  rolloutMaxCards: 4,        // 手牌 ≤ 这个数才开(跟牌)。5 更强 +0.011,但要多花 10µs,见 PROGRESS
+  rolloutMaxCards: 5,        // 手牌 ≤ 这个数才开(跟牌)。见下面 rolloutMargin 的注释
   rolloutMaxCardsLead: 0,    // 领出单独的深度(0 = 跟 rolloutMaxCards 一样)
-  rolloutK: 6,              // 采样几个世界
-  rolloutM: 4,               // 只精算静态分最高的几个候选
+  rolloutK: 8,               // 采样几个世界
+  rolloutM: 6,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
   /* --- 中前期领出的截断前瞻:手牌还多的时候走不到底,就只往前推固定几墩,
    *     再用「剩下的牌值多少」当终局评价。代价与手牌张数无关。 --- */
@@ -88,7 +88,30 @@ const DEFAULTS = {
   midTermW: 1.0,             // 终局手牌强度差的权重
   midMinCards: 6,            // 手牌少于这个数就交给残局 rollout
   midMaxCards: 99,           // 手牌多于这个数就不前瞻(牌太多时既贵又不准)
-  rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
+  /* 静态分差距大于这个数就不必精算(0 = 总是精算)。注意它不是单纯的「领先就
+   * 跳过」闸门:门槛越大,落在门槛内的候选越多,精算的候选数反而增加 —— 所以
+   * 时间对它是非单调的。棋力则是单调递增的(n=3000:mg20 +0.0092 / mg35 +0.0105
+   * / mg50 +0.0113 / mg70 +0.0127 / 无门槛 +0.0143),因为它只是少做 rollout。
+   * 取 50:在 ≤2.7×greedy 的时间预算下最强的点。mg70 只多赚 0.0014 却贴到 2.90×。
+   *
+   * 这一组(margin 50 + maxCards 5 + K8 M6)整体 +0.0113 级/局(3.0σ, n=3000),
+   * 约 2.68× 冻结 greedy。**一行回退**:把这四个值改回 0 / 4 / 6 / 4,回到
+   * ~2.39×、棋力回到已合并版的水平。 */
+  rolloutMargin: 50,
+  /* 连续减半:早轮用很少的世界淘汰明显没戏的候选,把样本留给最后两个。
+   * **量下来赚不到,默认关,代码留档。** 原因是代数的,不是调参没调好:
+   * 等预算分配下决赛候选拿到 budget/2 = m·K/⌈log₂m⌉/2 个世界,而均摊版
+   * 每个候选拿 K 个。要占便宜需要 m > 2·⌈log₂m⌉ —— m=6 时恰好取等号,
+   * 决赛候选拿到的正好也是 8 个世界,一模一样。于是 rolloutSHW 取 16/24/32
+   * 结果**逐位相同**(世界池根本用不到),早轮那些基于 2 个世界的淘汰只会
+   * 丢信息:n=1500 量到 −0.0017。
+   * m 要到 8 以上才开始有赚,但 rolloutM 一旦放大,总预算就撑不住了。
+   *
+   * 附一个教训:第一版用**常数** step(每轮世界数相同),量到 +0.0077(1.6σ),
+   * 一度以为成了 —— 其实那是把最大预算花在候选最多的第一轮上,总走子数
+   * 62 次 vs 均摊版 48 次,**涨的是预算不是算法**。 */
+  rolloutSH: false,
+  rolloutSHW: 16,
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
   rolloutRichLead: false,    // 走子的领出候选补上「每门最小的一张」
@@ -171,6 +194,11 @@ const DEFAULTS = {
  *  1) 断门/得分按「完整墩」增量累计,不重扫整个 history
  *  2) 把「某门里比某个序号大的暗牌有几张」预先做成 O(1) 查表
  * 缓存挂在 AI 实例上(cache 参数),history 变短即认为换了一局。 */
+const ANKEYS = ['T', 'S', 'H', 'D', 'C'];
+/* leadV2 去重用的临时表:id -> 手牌下标。只写手牌用到的槽位,只读候选里的牌
+ * (必是手牌的子集),陈旧槽位读不到,不用清零。leadV2 不会被重入。 */
+const LIDX = new Int8Array(108);
+
 function analyze(view, cache) {
   const trump = view.trump || { suit: null, rank: view.trumpRank };
   const hist = view.history;
@@ -180,6 +208,32 @@ function analyze(view, cache) {
     C = { histLen: 0, nTricks: 0, voids: [{}, {}, {}, {}], teamPts: [0, 0],
           histSeen: new Int8Array(85), hsizePlayed: [0, 0, 0, 0],
           rank: trump.rank, tsuit: trump.suit, seat: view.seat };
+    /* 同一局里主是固定的(缓存的失效条件已经包含主的花色和点数),所以
+     * (花色,点数) -> (有效门, 序号) 的映射整局不变。原来每次决策都要新建
+     * 67 个 probe 小对象、调 134 次 effSuit/ordIdx —— 这里一次算完存起来。 */
+    C.esIdx = new Int8Array(85); C.ordOf = new Int8Array(85);
+    /* 这几个缓冲区整局复用。analyze 每次决策调一次,且不会被重入
+     * (残局 playout 走 quickMove,不碰 analyze);全代码只读不写它们
+     * (已核过 a.unseen / a.above / a.pairAbove / a.suitTot / a.nSuit /
+     * a.hsize 的全部使用点)。清零比分配便宜得多。 */
+    C.bufUnseen = new Int8Array(85);
+    C.bufAbove = {}; C.bufPairAbove = {};
+    for (let i = 0; i < 5; i++) {
+      C.bufAbove[ANKEYS[i]] = new Int16Array(17);
+      C.bufPairAbove[ANKEYS[i]] = new Int16Array(17);
+    }
+    C.bufSuitTot = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+    C.bufNSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+    C.bufHsize = [25, 25, 25, 25];
+    for (let si = 0; si < 5; si++) {
+      const suit = si === 4 ? 'X' : ALLSUITS[si];
+      const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
+      for (let r = lo; r <= hi; r++) {
+        const probe = { suit: suit, rank: r, id: -1 };
+        C.esIdx[si * 17 + r] = ANKEYS.indexOf(E.effSuit(probe, trump));
+        C.ordOf[si * 17 + r] = E.ordIdx(probe, trump);
+      }
+    }
     if (cache) { cache.reset = true; }
   }
   /* 增量吃掉新出现的手 */
@@ -208,7 +262,8 @@ function analyze(view, cache) {
   C.nTricks = done;
 
   /* 暗牌 = 全副 − 我的手牌 − 已出的 − 我知道的底牌 */
-  const unseen = new Int8Array(85);
+  const unseen = C.bufUnseen;
+  unseen.fill(0);
   for (let s = 0; s < 4; s++) for (let r = 2; r <= 14; r++) unseen[s * 17 + r] = 2;
   unseen[4 * 17 + 15] = 2; unseen[4 * 17 + 16] = 2;
   for (let i = 0; i < 85; i++) if (C.histSeen[i]) unseen[i] -= C.histSeen[i];
@@ -218,11 +273,12 @@ function analyze(view, cache) {
   for (let i = 0; i < bk.length; i++) unseen[keyOf(bk[i])]--;
 
   /* O(1) 查表:above[门][序号] = 该门里序号更大的暗牌张数 */
-  const KEYS = ['T', 'S', 'H', 'D', 'C'];
-  const above = {}, pairAbove = {}, suitTot = {};
-  for (let i = 0; i < 5; i++) { above[KEYS[i]] = new Int16Array(17); pairAbove[KEYS[i]] = new Int16Array(17); suitTot[KEYS[i]] = 0; }
+  const KEYS = ANKEYS;
+  const above = C.bufAbove, pairAbove = C.bufPairAbove, suitTot = C.bufSuitTot;
+  for (let i = 0; i < 5; i++) { above[KEYS[i]].fill(0); pairAbove[KEYS[i]].fill(0); suitTot[KEYS[i]] = 0; }
   let hiddenTotal = 0;
-  const nSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+  const nSuit = C.bufNSuit;
+  nSuit.T = 0; nSuit.S = 0; nSuit.H = 0; nSuit.D = 0; nSuit.C = 0;
   for (let si = 0; si < 5; si++) {
     const suit = si === 4 ? 'X' : ALLSUITS[si];
     const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
@@ -230,9 +286,8 @@ function analyze(view, cache) {
       const c = unseen[si * 17 + r];
       if (c <= 0) continue;
       hiddenTotal += c;
-      const probe = { suit: suit, rank: r, id: -1 };
-      const es = E.effSuit(probe, trump);
-      const o = E.ordIdx(probe, trump);
+      const es = KEYS[C.esIdx[si * 17 + r]];
+      const o = C.ordOf[si * 17 + r];
       above[es][o] += c;
       if (c >= 2) pairAbove[es][o] += 1;
       suitTot[es] += c;
@@ -244,8 +299,8 @@ function analyze(view, cache) {
     for (let o = 15; o >= 0; o--) { A1[o] += A1[o + 1]; A2[o] += A2[o + 1]; }
     /* A1[o] 现在是「序号 >= o」,要的是「> o」*/
   }
-  const hsize = [25, 25, 25, 25];
-  for (let i = 0; i < 4; i++) hsize[i] -= C.hsizePlayed[i];
+  const hsize = C.bufHsize;
+  for (let i = 0; i < 4; i++) hsize[i] = 25 - C.hsizePlayed[i];
 
   return {
     trump: trump, unseen: unseen, voids: C.voids, teamPts: C.teamPts, nTricks: C.nTricks,
@@ -1151,22 +1206,27 @@ function ptsScale(a, view, cfg) {
 
 /* 出完 cd 之后,我手上还剩几个「打得出去的赢张」。
  * 一张不剩 = 拿到先手只能往对手枪口上撞。 */
-function tempoFactor(cfg, a, view, cd, trump) {
-  if (!cfg.dynTempo) return 1;
-  const ids = new Set();
-  for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
-  const rest = [];
-  for (let i = 0; i < view.hand.length; i++) if (!ids.has(view.hand[i].id)) rest.push(view.hand[i]);
-  if (rest.length === 0) return 1;
-  let nWin = 0;
-  const g = M.bySuit(rest, trump);
-  const keys = ['T', 'S', 'H', 'D', 'C'];
-  for (let ki = 0; ki < keys.length && nWin < cfg.dynTempoFull; ki++) {
-    const cs = g[keys[ki]];
-    for (let i = 0; i < cs.length && nWin < cfg.dynTempoFull; i++) {
-      if (beatersLeft(a, cs[i], trump) === 0) nWin++;
-    }
+/* 每次决策预算一次:手里「已经没人压得动」的牌的 id。
+ * tempoFactor 的返回值只取决于 min(nWin, dynTempoFull) —— 与扫描顺序无关,
+ * 所以「全手牌赢张数减去这一手里的赢张数」和原来逐张扫 rest 逐位相同。
+ * 原来每个候选都要新建 Set + rest 数组 + bySuit 的五个数组,是 GC 的大头。 */
+function tempoPre(cfg, a, view, trump) {
+  if (!cfg.dynTempo) return null;
+  const hand = view.hand;
+  const win = new Set();
+  for (let i = 0; i < hand.length; i++) {
+    if (beatersLeft(a, hand[i], trump) === 0) win.add(hand[i].id);
   }
+  return win;
+}
+
+function tempoFactor(cfg, a, view, cd, trump, pre) {
+  if (!cfg.dynTempo) return 1;
+  if (cd.length >= view.hand.length) return 1;       // rest 为空,同原来的提前返回
+  const win = pre || tempoPre(cfg, a, view, trump);
+  let nWin = win.size;
+  for (let i = 0; i < cd.length; i++) if (win.has(cd[i].id)) nWin--;
+  if (nWin > cfg.dynTempoFull) nWin = cfg.dynTempoFull;   // 同原来循环里的提前退出
   if (nWin === 0) return cfg.dynTempoFloor;
   return Math.min(1, nWin / cfg.dynTempoFull);
 }
@@ -1186,14 +1246,19 @@ function lastTrickSwing(cfg, view, L, pWin) {
 
 /* 出掉这一手之后,手牌结构受了多少损伤 */
 /* 每次决策只算一次的手牌摘要 */
+/* (花色,点数) -> 0..84 的整数编码。原来用 suit + '/' + rank 的字符串键,
+ * 每张牌一次字符串拼接 + 一次 Map 查找,在候选循环里被跑上千次。编码是
+ * 单射,所以换成定长表之后计数逐位相同。 */
+const SUITCODE = { S: 0, H: 1, D: 2, C: 3, X: 4 };
+function ccode(card) { return SUITCODE[card.suit] * 17 + card.rank; }
+
 function handSummary(view, trump) {
   const hand = view.hand;
-  const inHand = new Map();
+  const inHand = new Int8Array(96);
   const suitCnt = {};
   let nTrump = 0;
   for (let i = 0; i < hand.length; i++) {
-    const k = hand[i].suit + '/' + hand[i].rank;
-    inHand.set(k, (inHand.get(k) || 0) + 1);
+    inHand[ccode(hand[i])]++;
     const es = E.effSuit(hand[i], trump);
     if (es === 'T') nTrump++; else suitCnt[es] = (suitCnt[es] || 0) + 1;
   }
@@ -1206,14 +1271,14 @@ function structCost(cfg, a, view, cd, trump, hsum) {
   let cost = 0;
   if (cfg.breakPairW) {
     const inHand = hsum ? hsum.inHand : handSummary(view, trump).inHand;
-    const inPlay = new Map();
+    /* 「这一手里只出了一张、但手上还有一对」的每个键计一次。cd 最多八张,
+     * 直接两重扫描,和原来建 Map 再 forEach 的结果相同,但不分配。 */
     for (let i = 0; i < cd.length; i++) {
-      const k = cd[i].suit + '/' + cd[i].rank;
-      inPlay.set(k, (inPlay.get(k) || 0) + 1);
+      const k = ccode(cd[i]);
+      let n = 0;
+      for (let j = 0; j < cd.length; j++) if (ccode(cd[j]) === k) n++;
+      if (n === 1 && inHand[k] >= 2) cost += cfg.breakPairW;
     }
-    inPlay.forEach(function (v, k) {
-      if (v === 1 && inHand.get(k) >= 2) cost += cfg.breakPairW;
-    });
     if (cfg.breakTractorW) {
       /* 出掉之后,本门最长拖拉机短了多少 */
       const es = E.effSuit(cd[0], trump);
@@ -1329,6 +1394,20 @@ function sampleWorlds(a, view, cfg, kOverride) {
   return out;
 }
 
+/* 原地删掉这一手打出去的牌。走子里 H 本来就是 hands0[i].slice() 的私有拷贝,
+ * cd 最多几张 —— 原来每走一步要新建一个 Set 加一个新数组,而残局 rollout
+ * 一次决策要走几百步。往前扫比建 Set 便宜,而且完全不分配。 */
+function dropInPlace(hand, cd) {
+  let w = 0;
+  for (let i = 0; i < hand.length; i++) {
+    let hit = false;
+    for (let j = 0; j < cd.length; j++) if (cd[j].id === hand[i].id) { hit = true; break; }
+    if (!hit) hand[w++] = hand[i];
+  }
+  hand.length = w;
+  return hand;
+}
+
 function dropIds(hand, idset) {
   const out = [];
   for (let i = 0; i < hand.length; i++) if (!idset.has(hand[i].id)) out.push(hand[i]);
@@ -1415,8 +1494,18 @@ function quickMove(hands, seat, trump, plays, leadCl, smart, rich) {
 }
 
 /* 从当前局面走到这一局结束,返回「对我方的净分」 */
+/* 走子用的复用手牌缓冲。playoutValue 不会被重入(quickMove 不回头调它),而
+ * 一次决策要跑 M×K 遍走子,原来每遍要新建四个数组。truncPlayout 用另一组,
+ * 免得两者互相踩(虽然它们也不互调)。 */
+const _PH = [[], [], [], []];
+
 function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam, smart, rich) {
-  const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
+  const H = _PH;
+  for (let p = 0; p < 4; p++) {
+    const src = hands0[p], dst = H[p];
+    dst.length = src.length;
+    for (let i = 0; i < src.length; i++) dst[i] = src[i];
+  }
   const teamPts = [0, 0];
   let cur = plays0.slice();
   let lead = E.classify(cur[0].cards, trump);
@@ -1426,9 +1515,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
       const cd = quickMove(H, seat, trump, cur, lead, smart, rich);
-      const ids = new Set();
-      for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
-      H[seat] = dropIds(H[seat], ids);
+      dropInPlace(H[seat], cd);
       cur.push({ seat: seat, cards: cd });
     }
     const r = E.resolveTrick(cur, trump);
@@ -1437,9 +1524,7 @@ function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam,
     ldr = r.winner;
     if (H[ldr].length === 0) break;
     const lc = quickMove(H, ldr, trump, [], null, smart, rich);
-    const ids2 = new Set();
-    for (let i = 0; i < lc.length; i++) ids2.add(lc[i].id);
-    H[ldr] = dropIds(H[ldr], ids2);
+    dropInPlace(H[ldr], lc);
     lead = E.classify(lc, trump);
     cur = [{ seat: ldr, cards: lc }];
   }
@@ -1483,12 +1568,8 @@ function truncPlayout(hands0, trump, plays0, leader, myTeam, maxTricks, a, cfg, 
     while (cur.length < 4) {
       const seat = (ldr + cur.length) % 4;
       const cd = quickMove(H, seat, trump, cur, lead, cfg.rolloutSmartLead ? 1 : 0, false);
-      const ids = new Set();
-      for (let i = 0; i < cd.length; i++) {
-        ids.add(cd[i].id);
-        spent[seat % 2] += cardValue(a, cd[i], trump, cfg);
-      }
-      H[seat] = dropIds(H[seat], ids);
+      for (let i = 0; i < cd.length; i++) spent[seat % 2] += cardValue(a, cd[i], trump, cfg);
+      dropInPlace(H[seat], cd);
       cur.push({ seat: seat, cards: cd });
     }
     const r = E.resolveTrick(cur, trump);
@@ -1498,12 +1579,8 @@ function truncPlayout(hands0, trump, plays0, leader, myTeam, maxTricks, a, cfg, 
     if (H[ldr].length === 0) break;
     if (done >= maxTricks) break;
     const lc = quickMove(H, ldr, trump, [], null, cfg.rolloutSmartLead ? 1 : 0, false);
-    const ids2 = new Set();
-    for (let i = 0; i < lc.length; i++) {
-      ids2.add(lc[i].id);
-      spent[ldr % 2] += cardValue(a, lc[i], trump, cfg);
-    }
-    H[ldr] = dropIds(H[ldr], ids2);
+    for (let i = 0; i < lc.length; i++) spent[ldr % 2] += cardValue(a, lc[i], trump, cfg);
+    dropInPlace(H[ldr], lc);
     lead = E.classify(lc, trump);
     cur = [{ seat: ldr, cards: lc }];
   }
@@ -1552,26 +1629,75 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
     if (n < 2) return scored[0].cd;          // 静态分遥遥领先,不必精算
     m = n;
   }
-  const worlds = sampleWorlds(a, view, cfg);
+  const worlds = sampleWorlds(a, view, cfg, cfg.rolloutSH ? (cfg.rolloutSHW || cfg.rolloutK) : 0);
   const trump = a.trump;
   const declTeam = view.declSeat % 2;
   const kp = (view.buriedKnown && view.buriedKnown.length)
     ? E.countPoints(view.buriedKnown) : cfg.rolloutKittyPrior;
-  let best = scored[0].cd, bv = -1e9;
+  const smart = cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0);
+  const ldr = plays ? plays[0].seat : view.seat;
+  const hands = [null, null, null, null];        // 复用:playoutValue 只读它
+
+  /* 每个候选出牌后的手牌与 pl 都不依赖世界,先备好 */
+  const pre = [];
   for (let i = 0; i < m; i++) {
     const cd = scored[i].cd;
     const ids = new Set();
     for (let j = 0; j < cd.length; j++) ids.add(cd[j].id);
-    let tot = 0;
-    for (let w = 0; w < worlds.length; w++) {
-      const hands = worlds[w].slice();
-      hands[view.seat] = dropIds(hands[view.seat], ids);
-      const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
-      const ldr = plays ? plays[0].seat : view.seat;
-      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam,
-        cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0), cfg.rolloutRichLead);
+    pre.push({
+      cd: cd, ids: ids, cachedSrc: null, cachedAfter: null,
+      pl: plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }],
+    });
+  }
+  function run(i, w) {
+    const e = pre[i], wh = worlds[w], src = wh[view.seat];
+    /* 我自己的手牌在每个世界里是同一个数组(sampleWorlds 里 hands[me] =
+     * view.hand),所以「出掉这一手之后的手牌」也一样 —— 原来算了 K 遍。
+     * 按数组身份缓存:万一以后 sampleWorlds 改成每个世界一份拷贝,身份不同
+     * 就会自然退回逐世界计算,结果仍然正确。 */
+    if (src !== e.cachedSrc) { e.cachedSrc = src; e.cachedAfter = dropIds(src, e.ids); }
+    hands[0] = wh[0]; hands[1] = wh[1]; hands[2] = wh[2]; hands[3] = wh[3];
+    hands[view.seat] = e.cachedAfter;
+    return playoutValue(hands, trump, e.pl, ldr, view.myTeam, kp, declTeam, smart, cfg.rolloutRichLead);
+  }
+
+  if (cfg.rolloutSH) {
+    /* 连续减半:均摊给 m 个候选是浪费 —— 其中几个走两个世界就看得出没戏。
+     * 每一轮所有存活候选都在**同一批世界**上评估(共同随机数),按累计分排序
+     * 淘汰一半,下一轮再往前多铺几个世界。被淘汰的候选不影响后续比较,所以
+     * 任意时刻存活者比较的都是同一个世界前缀 —— 配对性保持,不会因为「有的
+     * 候选运气好抽到容易的世界」而选错。 */
+    const W = worlds.length;
+    const tot = new Float64Array(m);
+    const alive = [];
+    for (let i = 0; i < m; i++) alive.push(i);
+    const nRounds = Math.max(1, Math.ceil(Math.log(m) / Math.LN2));
+    /* 总走子预算对齐均摊版(m × rolloutK),每轮分掉大致相等的一份。
+     * 候选减半时每人能铺的世界数就翻倍 —— 这才是连续减半省钱的地方:
+     * 早轮用很少的世界淘汰明显没戏的,把样本留给最后两个真正接近的。
+     * 每轮固定用同样多的世界数是错的,那等于把最大的预算花在候选最多的
+     * 第一轮上,总量反而超过均摊版。 */
+    const budget = Math.max(1, Math.floor(m * cfg.rolloutK / nRounds));
+    let done = 0;
+    while (alive.length > 1 && done < W) {
+      const per = Math.max(1, Math.floor(budget / alive.length));
+      const upto = Math.min(W, done + per);
+      for (let ai = 0; ai < alive.length; ai++) {
+        const i = alive[ai];
+        for (let w = done; w < upto; w++) tot[i] += run(i, w);
+      }
+      done = upto;
+      alive.sort(function (x, y) { return tot[y] - tot[x]; });
+      alive.length = Math.max(1, Math.ceil(alive.length / 2));
     }
-    if (tot > bv) { bv = tot; best = cd; }
+    return scored[alive[0]].cd;
+  }
+
+  let best = scored[0].cd, bv = -1e9;
+  for (let i = 0; i < m; i++) {
+    let tot = 0;
+    for (let w = 0; w < worlds.length; w++) tot += run(i, w);
+    if (tot > bv) { bv = tot; best = scored[i].cd; }
   }
   return best;
 }
@@ -1594,6 +1720,7 @@ function leadV2(cfg, view) {
 
   const PS = ptsScale(a, view, cfg);
   const HSUM = handSummary(view, trump);
+  const TPRE = tempoPre(cfg, a, view, trump);
   let cands = M.genLeadCandidates(hand, trump);
   const thr = M.genThrowCandidates(hand, trump, 30);
   for (let i = 0; i < thr.length; i++) cands.push(thr[i]);
@@ -1624,9 +1751,17 @@ function leadV2(cfg, view) {
   const scored = useRoll ? [] : null;
   const scoredMid = useMid ? [] : null;
   const seen = new Set();
+  /* 去重键:原来是 map(id).sort().join(',') —— 每个候选两个数组、两个闭包、
+   * 一个字符串。候选都是手牌的子集,所以「手牌下标位掩码」是单射的。
+   * 掩码只在手牌 ≤31 张时可靠(领出时至多 25 张,但别人改代码不一定记得),
+   * 超了就退回字符串键。 */
+  const useMask = hand.length <= 31;
+  if (useMask) for (let i = 0; i < hand.length; i++) LIDX[hand[i].id] = i;
   for (let i = 0; i < cands.length; i++) {
     const cd = cands[i];
-    const key = cd.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
+    let key;
+    if (useMask) { key = 0; for (let j = 0; j < cd.length; j++) key |= (1 << LIDX[cd[j].id]); }
+    else key = cd.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
     if (seen.has(key)) continue;
     seen.add(key);
     const cl = E.classify(cd, trump);
@@ -1661,7 +1796,7 @@ function leadV2(cfg, view) {
     const evWin = myPts + L * cfg.leadWinPts;
     const evLose = myPts + L * cfg.leadLosePts;
     let sc = (pWin * evWin - (1 - pWin) * evLose) * PS;
-    sc += pWin * TEMPOW * tempoFactor(cfg, a, view, cd, trump);
+    sc += pWin * TEMPOW * tempoFactor(cfg, a, view, cd, trump, TPRE);
     sc += lastTrickSwing(cfg, view, L, pWin);
 
     let spent = 0;
@@ -1720,6 +1855,7 @@ function followV2(cfg, view, plays) {
   const hidden = a.hiddenTotal;
   const L = lead0.cards.length;
   const cands = M.genFollowCandidates(hand, lead0, trump, null, cfg.followCap, cfg.fillCap);
+  const TPRE = tempoPre(cfg, a, view, trump);
 
   /* 我之后还有谁没出 */
   const laterSeats = [];
@@ -1797,7 +1933,7 @@ function followV2(cfg, view, plays) {
       const total = ptsOnTable + myPts + expLater;
       sc = (2 * pTeam - 1) * total * PS;
     }
-    sc += pTeam * TEMPOW * 0.5 * tempoFactor(cfg, a, view, cd, trump);
+    sc += pTeam * TEMPOW * 0.5 * tempoFactor(cfg, a, view, cd, trump, TPRE);
     sc += lastTrickSwing(cfg, view, L, pTeam);
 
     let spent = 0;
@@ -1833,7 +1969,25 @@ function makeAI(config) {
    * 「最笨的合法着法」—— 局照打、零违规,但棋力会被打回原形。
    * 这里把兜底次数记下来,开发期一眼就能看见,不然这种 bug 会藏很久
    * (自对弈 A/B 对「两边一起变差」是结构性失明的)。 */
-  const fb = { deal: 0, rebel: 0, discard: 0, lead: 0, follow: 0 };
+  const fb = { deal: 0, rebel: 0, discard: 0, lead: 0, follow: 0, hard: 0 };
+
+  /* 最后一层:只做最小假设的切片,**永不抛**。
+   * 第一版的兜底写在 try 之外 —— fuzz 出畸形 view(手牌里混 null)时兜底自己
+   * 又抛一次,异常直接穿透。兜底路径存在的意义就是接住「没想到的输入」,一个
+   * 自己会抛的兜底不算兜底。这一层返回的着法可能非法(吃罚分),但罚分是有界
+   * 损失,异常不是 —— §S2 下抛异常直接记违规,而且是我控制不了的路径。 */
+  function lastResort(view, k) {
+    fb.hard++;
+    const out = [];
+    try {
+      const h = view && view.hand;
+      if (h && h.length) {
+        for (let i = 0; i < h.length && out.length < k; i++) if (h[i]) out.push(h[i]);
+      }
+    } catch (e2) { /* 连 view.hand 都读不到,只能交空数组 */ }
+    return out;
+  }
+
   return {
     name: config && config.name ? config.name : 'claude-opus-5',
     cfg: cfg,
@@ -1846,8 +2000,11 @@ function makeAI(config) {
         if (d && d.length === 8) return d;
       } catch (e) { }
       fb.discard++;
-      const h = view.hand.slice().sort(function (x, y) { return M.junkScore(x, view.trump) - M.junkScore(y, view.trump); });
-      return h.slice(0, 8);
+      try {
+        const h = view.hand.slice().sort(function (x, y) { return M.junkScore(x, view.trump) - M.junkScore(y, view.trump); });
+        if (h.length >= 8) return h.slice(0, 8);
+      } catch (e) { }
+      return lastResort(view, 8);
     },
     lead: function (view) {
       try {
@@ -1855,16 +2012,28 @@ function makeAI(config) {
         if (l && l.length && E.classify(l, view.trump)) return l;
       } catch (e) { }
       fb.lead++;
-      return M.forceLegalLead(view.hand, view.trump);
+      try {
+        const l = M.forceLegalLead(view.hand, view.trump);
+        if (l && l.length) return l;
+      } catch (e) { }
+      return lastResort(view, 1);
     },
     follow: function (view, plays) {
-      const lead0 = E.classify(plays[0].cards, view.trump);
+      let lead0 = null, k = 1;
+      try {
+        lead0 = E.classify(plays[0].cards, view.trump);
+        k = plays[0].cards.length;
+      } catch (e) { }
       try {
         const f = cfg.evalV2 ? followV2(cfg, view, plays) : follow(cfg, view, plays);
         if (f && lead0 && E.isLegalFollow(view.hand, lead0, f, view.trump, null)) return f;
       } catch (e) { }
       fb.follow++;
-      return M.forceLegalFollow(view.hand, lead0, view.trump, null);
+      try {
+        const f = M.forceLegalFollow(view.hand, lead0, view.trump, null);
+        if (f && f.length) return f;
+      } catch (e) { }
+      return lastResort(view, k);
     },
   };
 }
