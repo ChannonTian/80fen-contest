@@ -162,14 +162,22 @@ function sigOf(cl) {
 
 /* ---------- ⑤ isLegalFollow ---------- */
 
+/* 和 decompose 同样的换法:字符串键 Map -> 版本戳定长表,零分配。
+ * 用独立的戳表,免得和 decompose 的互相冲掉(isLegalFollow 里两者交替调用)。
+ * 计数:每当某个键的张数凑成偶数就 +1,等价于原来的 sum(floor(v/2))。 */
+const _cSeen = new Int32Array(96);
+const _cCnt = new Int8Array(96);
+let _cStamp = 0;
+
 function countPairsIn(cards) {
-  const m = new Map();
-  for (let i = 0; i < cards.length; i++) {
-    const k = cards[i].suit + '/' + cards[i].rank;
-    m.set(k, (m.get(k) || 0) + 1);
-  }
+  if (_cStamp > 2000000000) { _cSeen.fill(0); _cStamp = 0; }
+  const st = ++_cStamp;
   let n = 0;
-  m.forEach(function (v) { n += Math.floor(v / 2); });
+  for (let i = 0; i < cards.length; i++) {
+    const k = DSUIT[cards[i].suit] * 17 + cards[i].rank;
+    if (_cSeen[k] !== st) { _cSeen[k] = st; _cCnt[k] = 1; }
+    else { _cCnt[k]++; if ((_cCnt[k] & 1) === 0) n++; }
+  }
   return n;
 }
 
@@ -188,6 +196,9 @@ function needPairs(lead) {
 }
 
 function longestTractor(cards, trump) {
+  /* 拖拉机至少两个对子 = 4 张,所以不足 4 张必然返回 0 —— 不必跑一整趟
+   * decompose。isLegalFollow 里 chosenInSuit 常常只有一两张,这条短路很值。 */
+  if (cards.length < 4) return 0;
   const comps = decompose(cards, trump);
   let m = 0;
   for (let i = 0; i < comps.length; i++) {
