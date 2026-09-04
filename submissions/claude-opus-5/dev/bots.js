@@ -230,3 +230,128 @@ const greedyFrozen = frozenify(greedy, 'greedyFrozen');
 
 module.exports.greedyFrozen = greedyFrozen;
 
+
+/* ---------- 陌生风格的对手 ----------
+ * 我所有的调参都是打我自己写的 bot,而联赛里对手是别的模型写的程序。
+ * 这几个的目的不是"强",是**风格上与我的参照选手正交**,用来试探我的
+ * 对手模型和评估函数有没有对某一类打法系统性失灵。全部确定性(自带种子)。 */
+function rngFrom(seed) {
+  let t = seed >>> 0;
+  return function () {
+    t += 0x6D2B79F5; let x = t;
+    x = Math.imul(x ^ (x >>> 15), x | 1);
+    x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seedOf(v) {
+  let s = (v.hand.length * 31 + (v.history ? v.history.length : 0) * 7919 + v.seat * 131) | 0;
+  for (let i = 0; i < v.hand.length; i++) s = (s * 33 + v.hand[i].id) | 0;
+  return s;
+}
+
+/* 完全不可预测:在合法候选里等概率乱挑。专门用来打「对手是理性的」这个假设。 */
+function randomLegal() {
+  return {
+    name: 'randomLegal',
+    onDeal(v) {
+      const r = v.trumpRank, h = v.hand, rng = rngFrom(seedOf(v));
+      const ok = [];
+      for (const c of h) if (c.rank === r && c.suit !== 'X') ok.push(c.suit);
+      if (!ok.length || rng() < 0.4) return null;
+      const s = ok[Math.floor(rng() * ok.length) % ok.length];
+      if (v.curDecl && (v.curDecl.seat === v.seat || v.curDecl.strength >= 1)) return null;
+      return { suit: s, strength: 1 };
+    },
+    onRebel() { return false; },
+    discard(v) {
+      const rng = rngFrom(seedOf(v));
+      const h = v.hand.slice();
+      for (let i = h.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = h[i]; h[i] = h[j]; h[j] = t; }
+      return h.slice(0, 8);
+    },
+    lead(v) {
+      const cands = M.genLeadCandidates(v.hand, v.trump);
+      if (!cands.length) return M.forceLegalLead(v.hand, v.trump);
+      return cands[Math.floor(rngFrom(seedOf(v))() * cands.length) % cands.length];
+    },
+    follow(v, plays) {
+      const lead = E.classify(plays[0].cards, v.trump);
+      const cands = M.genFollowCandidates(v.hand, lead, v.trump, null, 40);
+      if (!cands.length) return M.forceLegalFollow(v.hand, lead, v.trump, null);
+      return cands[Math.floor(rngFrom(seedOf(v))() * cands.length) % cands.length];
+    },
+  };
+}
+
+/* 甩牌狂:能甩就甩,专打我的甩牌处理与被甩时的应对。 */
+function thrower() {
+  const g = greedy();
+  return {
+    name: 'thrower',
+    onDeal: g.onDeal, onRebel: g.onRebel, discard: g.discard,
+    lead(v) {
+      const thr = M.genThrowCandidates(v.hand, v.trump, 30);
+      let best = null;
+      for (const cd of thr) if (!best || cd.length > best.length) best = cd;   // 越大越甩
+      return best || g.lead(v);
+    },
+    follow: g.follow,
+  };
+}
+
+/* 极端保守:永不领主,永远出最小的,分只往队友手里塞。 */
+function hoarder() {
+  const g = greedy();
+  return {
+    name: 'hoarder',
+    onDeal: g.onDeal, onRebel: g.onRebel, discard: g.discard,
+    lead(v) {
+      const cands = M.genLeadCandidates(v.hand, v.trump);
+      let best = null, bv = 1e9;
+      for (const cd of cands) {
+        const cl = E.classify(cd, v.trump);
+        if (!cl) continue;
+        const s = cl.top + (cl.suit === 'T' ? 100 : 0) + E.countPoints(cd) * 3;
+        if (s < bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalLead(v.hand, v.trump);
+    },
+    follow: g.follow,
+  };
+}
+
+/* 极端进攻:永远出能出的最大的一手,高牌早早烧光。 */
+function maxer() {
+  const g = greedy();
+  return {
+    name: 'maxer',
+    onDeal: g.onDeal, onRebel: g.onRebel, discard: g.discard,
+    lead(v) {
+      const cands = M.genLeadCandidates(v.hand, v.trump);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const cl = E.classify(cd, v.trump);
+        if (!cl) continue;
+        const s = cl.top + (cl.suit === 'T' ? 50 : 0) + cd.length * 3;
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalLead(v.hand, v.trump);
+    },
+    follow(v, plays) {
+      const lead = E.classify(plays[0].cards, v.trump);
+      const cands = M.genFollowCandidates(v.hand, lead, v.trump, null, 40);
+      let best = null, bv = -1e9;
+      for (const cd of cands) {
+        const cl = E.classify(cd, v.trump);
+        const s = (cl ? cl.top : -1) + (cl && cl.suit === 'T' ? 50 : 0);
+        if (s > bv) { bv = s; best = cd; }
+      }
+      return best || M.forceLegalFollow(v.hand, lead, v.trump, null);
+    },
+  };
+}
+module.exports.randomLegal = randomLegal;
+module.exports.thrower = thrower;
+module.exports.hoarder = hoarder;
+module.exports.maxer = maxer;
