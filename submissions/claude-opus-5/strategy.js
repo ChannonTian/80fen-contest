@@ -186,6 +186,19 @@ function analyze(view, cache) {
      * (花色,点数) -> (有效门, 序号) 的映射整局不变。原来每次决策都要新建
      * 67 个 probe 小对象、调 134 次 effSuit/ordIdx —— 这里一次算完存起来。 */
     C.esIdx = new Int8Array(85); C.ordOf = new Int8Array(85);
+    /* 这几个缓冲区整局复用。analyze 每次决策调一次,且不会被重入
+     * (残局 playout 走 quickMove,不碰 analyze);全代码只读不写它们
+     * (已核过 a.unseen / a.above / a.pairAbove / a.suitTot / a.nSuit /
+     * a.hsize 的全部使用点)。清零比分配便宜得多。 */
+    C.bufUnseen = new Int8Array(85);
+    C.bufAbove = {}; C.bufPairAbove = {};
+    for (let i = 0; i < 5; i++) {
+      C.bufAbove[ANKEYS[i]] = new Int16Array(17);
+      C.bufPairAbove[ANKEYS[i]] = new Int16Array(17);
+    }
+    C.bufSuitTot = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+    C.bufNSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+    C.bufHsize = [25, 25, 25, 25];
     for (let si = 0; si < 5; si++) {
       const suit = si === 4 ? 'X' : ALLSUITS[si];
       const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
@@ -223,7 +236,8 @@ function analyze(view, cache) {
   C.nTricks = done;
 
   /* 暗牌 = 全副 − 我的手牌 − 已出的 − 我知道的底牌 */
-  const unseen = new Int8Array(85);
+  const unseen = C.bufUnseen;
+  unseen.fill(0);
   for (let s = 0; s < 4; s++) for (let r = 2; r <= 14; r++) unseen[s * 17 + r] = 2;
   unseen[4 * 17 + 15] = 2; unseen[4 * 17 + 16] = 2;
   for (let i = 0; i < 85; i++) if (C.histSeen[i]) unseen[i] -= C.histSeen[i];
@@ -234,10 +248,11 @@ function analyze(view, cache) {
 
   /* O(1) 查表:above[门][序号] = 该门里序号更大的暗牌张数 */
   const KEYS = ANKEYS;
-  const above = {}, pairAbove = {}, suitTot = {};
-  for (let i = 0; i < 5; i++) { above[KEYS[i]] = new Int16Array(17); pairAbove[KEYS[i]] = new Int16Array(17); suitTot[KEYS[i]] = 0; }
+  const above = C.bufAbove, pairAbove = C.bufPairAbove, suitTot = C.bufSuitTot;
+  for (let i = 0; i < 5; i++) { above[KEYS[i]].fill(0); pairAbove[KEYS[i]].fill(0); suitTot[KEYS[i]] = 0; }
   let hiddenTotal = 0;
-  const nSuit = { T: 0, S: 0, H: 0, D: 0, C: 0 };
+  const nSuit = C.bufNSuit;
+  nSuit.T = 0; nSuit.S = 0; nSuit.H = 0; nSuit.D = 0; nSuit.C = 0;
   for (let si = 0; si < 5; si++) {
     const suit = si === 4 ? 'X' : ALLSUITS[si];
     const lo = si === 4 ? 15 : 2, hi = si === 4 ? 16 : 14;
@@ -258,8 +273,8 @@ function analyze(view, cache) {
     for (let o = 15; o >= 0; o--) { A1[o] += A1[o + 1]; A2[o] += A2[o + 1]; }
     /* A1[o] 现在是「序号 >= o」,要的是「> o」*/
   }
-  const hsize = [25, 25, 25, 25];
-  for (let i = 0; i < 4; i++) hsize[i] -= C.hsizePlayed[i];
+  const hsize = C.bufHsize;
+  for (let i = 0; i < 4; i++) hsize[i] = 25 - C.hsizePlayed[i];
 
   return {
     trump: trump, unseen: unseen, voids: C.voids, teamPts: C.teamPts, nTricks: C.nTricks,
