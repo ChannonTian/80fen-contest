@@ -1151,22 +1151,27 @@ function ptsScale(a, view, cfg) {
 
 /* 出完 cd 之后,我手上还剩几个「打得出去的赢张」。
  * 一张不剩 = 拿到先手只能往对手枪口上撞。 */
-function tempoFactor(cfg, a, view, cd, trump) {
-  if (!cfg.dynTempo) return 1;
-  const ids = new Set();
-  for (let i = 0; i < cd.length; i++) ids.add(cd[i].id);
-  const rest = [];
-  for (let i = 0; i < view.hand.length; i++) if (!ids.has(view.hand[i].id)) rest.push(view.hand[i]);
-  if (rest.length === 0) return 1;
-  let nWin = 0;
-  const g = M.bySuit(rest, trump);
-  const keys = ['T', 'S', 'H', 'D', 'C'];
-  for (let ki = 0; ki < keys.length && nWin < cfg.dynTempoFull; ki++) {
-    const cs = g[keys[ki]];
-    for (let i = 0; i < cs.length && nWin < cfg.dynTempoFull; i++) {
-      if (beatersLeft(a, cs[i], trump) === 0) nWin++;
-    }
+/* 每次决策预算一次:手里「已经没人压得动」的牌的 id。
+ * tempoFactor 的返回值只取决于 min(nWin, dynTempoFull) —— 与扫描顺序无关,
+ * 所以「全手牌赢张数减去这一手里的赢张数」和原来逐张扫 rest 逐位相同。
+ * 原来每个候选都要新建 Set + rest 数组 + bySuit 的五个数组,是 GC 的大头。 */
+function tempoPre(cfg, a, view, trump) {
+  if (!cfg.dynTempo) return null;
+  const hand = view.hand;
+  const win = new Set();
+  for (let i = 0; i < hand.length; i++) {
+    if (beatersLeft(a, hand[i], trump) === 0) win.add(hand[i].id);
   }
+  return win;
+}
+
+function tempoFactor(cfg, a, view, cd, trump, pre) {
+  if (!cfg.dynTempo) return 1;
+  if (cd.length >= view.hand.length) return 1;       // rest 为空,同原来的提前返回
+  const win = pre || tempoPre(cfg, a, view, trump);
+  let nWin = win.size;
+  for (let i = 0; i < cd.length; i++) if (win.has(cd[i].id)) nWin--;
+  if (nWin > cfg.dynTempoFull) nWin = cfg.dynTempoFull;   // 同原来循环里的提前退出
   if (nWin === 0) return cfg.dynTempoFloor;
   return Math.min(1, nWin / cfg.dynTempoFull);
 }
@@ -1594,6 +1599,7 @@ function leadV2(cfg, view) {
 
   const PS = ptsScale(a, view, cfg);
   const HSUM = handSummary(view, trump);
+  const TPRE = tempoPre(cfg, a, view, trump);
   let cands = M.genLeadCandidates(hand, trump);
   const thr = M.genThrowCandidates(hand, trump, 30);
   for (let i = 0; i < thr.length; i++) cands.push(thr[i]);
@@ -1661,7 +1667,7 @@ function leadV2(cfg, view) {
     const evWin = myPts + L * cfg.leadWinPts;
     const evLose = myPts + L * cfg.leadLosePts;
     let sc = (pWin * evWin - (1 - pWin) * evLose) * PS;
-    sc += pWin * TEMPOW * tempoFactor(cfg, a, view, cd, trump);
+    sc += pWin * TEMPOW * tempoFactor(cfg, a, view, cd, trump, TPRE);
     sc += lastTrickSwing(cfg, view, L, pWin);
 
     let spent = 0;
@@ -1720,6 +1726,7 @@ function followV2(cfg, view, plays) {
   const hidden = a.hiddenTotal;
   const L = lead0.cards.length;
   const cands = M.genFollowCandidates(hand, lead0, trump, null, cfg.followCap, cfg.fillCap);
+  const TPRE = tempoPre(cfg, a, view, trump);
 
   /* 我之后还有谁没出 */
   const laterSeats = [];
@@ -1797,7 +1804,7 @@ function followV2(cfg, view, plays) {
       const total = ptsOnTable + myPts + expLater;
       sc = (2 * pTeam - 1) * total * PS;
     }
-    sc += pTeam * TEMPOW * 0.5 * tempoFactor(cfg, a, view, cd, trump);
+    sc += pTeam * TEMPOW * 0.5 * tempoFactor(cfg, a, view, cd, trump, TPRE);
     sc += lastTrickSwing(cfg, view, L, pTeam);
 
     let spent = 0;

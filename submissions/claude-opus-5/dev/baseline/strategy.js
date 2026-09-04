@@ -79,7 +79,9 @@ const DEFAULTS = {
   rolloutKittyPrior: 4,
   /* --- 中前期领出的截断前瞻:手牌还多的时候走不到底,就只往前推固定几墩,
    *     再用「剩下的牌值多少」当终局评价。代价与手牌张数无关。 --- */
-  midLook: true,
+  /* 量下来是**负的**(修好 followV2 之后 −0.047 级/局,6.3σ)。保留代码作为记录,
+   * 默认关。曾经量到 +0.06 —— 那是 followV2 当时在抛异常、两边一起退化的假象。 */
+  midLook: false,
   midTricks: 1,              // 往前推几墩
   midK: 3,                   // 采样几个世界
   midM: 3,                   // 精算静态分最高的几个候选
@@ -580,17 +582,7 @@ function lead(cfg, view) {
     let cost = 0;
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
-    if (useRoll) scored.push({ cd: cd, sc: sc });
-    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
-  }
-  if (useRoll && scored.length > 1) {
-    const r = rolloutPick(cfg, a, view, scored, null, null);
-    if (r) return r;
-  }
-  if (useMid && scoredMid.length > 1) {
-    const r = midLookPick(cfg, a, view, scoredMid);
-    if (r) return r;
   }
   if (!best) best = M.forceLegalLead(hand, trump);
   return best;
@@ -649,13 +641,7 @@ function follow(cfg, view, plays) {
     let cost = 0;
     for (let j = 0; j < cd.length; j++) cost += cardValue(a, cd[j], trump);
     sc -= cost * cfg.cardCostWeight;
-    if (useRoll) scored.push({ cd: cd, sc: sc });
-    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
-  }
-  if (useRoll && scored.length > 1) {
-    const r = rolloutPick(cfg, a, view, scored, plays, lead0);
-    if (r && E.isLegalFollow(hand, lead0, r, trump, null)) return r;
   }
   if (!best || !E.isLegalFollow(hand, lead0, best, trump, null)) {
     best = M.forceLegalFollow(hand, lead0, trump, null);
@@ -1825,7 +1811,6 @@ function followV2(cfg, view, plays) {
     }
 
     if (useRoll) scored.push({ cd: cd, sc: sc });
-    if (useMid) scoredMid.push({ cd: cd, sc: sc });
     if (sc > bestScore) { bestScore = sc; best = cd; }
   }
   if (useRoll && scored.length > 1) {
@@ -1844,16 +1829,23 @@ function makeAI(config) {
   const cfg = {};
   for (const k in DEFAULTS) cfg[k] = DEFAULTS[k];
   if (config) for (const k in config) cfg[k] = config[k];
+  /* 兜底计数器。五个方法都用 try/catch 包着,任何异常都会被静默换成
+   * 「最笨的合法着法」—— 局照打、零违规,但棋力会被打回原形。
+   * 这里把兜底次数记下来,开发期一眼就能看见,不然这种 bug 会藏很久
+   * (自对弈 A/B 对「两边一起变差」是结构性失明的)。 */
+  const fb = { deal: 0, rebel: 0, discard: 0, lead: 0, follow: 0 };
   return {
     name: config && config.name ? config.name : 'claude-opus-5',
     cfg: cfg,
-    onDeal: function (view) { try { return cfg.declV2 ? onDealV2(cfg, view) : onDeal(cfg, view); } catch (e) { return null; } },
-    onRebel: function (view) { try { return onRebel(cfg, view); } catch (e) { return false; } },
+    fallbacks: fb,
+    onDeal: function (view) { try { return cfg.declV2 ? onDealV2(cfg, view) : onDeal(cfg, view); } catch (e) { fb.deal++; return null; } },
+    onRebel: function (view) { try { return onRebel(cfg, view); } catch (e) { fb.rebel++; return false; } },
     discard: function (view) {
       try {
         const d = cfg.discV2 ? discardV2(cfg, view) : discard(cfg, view);
         if (d && d.length === 8) return d;
       } catch (e) { }
+      fb.discard++;
       const h = view.hand.slice().sort(function (x, y) { return M.junkScore(x, view.trump) - M.junkScore(y, view.trump); });
       return h.slice(0, 8);
     },
@@ -1862,6 +1854,7 @@ function makeAI(config) {
         const l = cfg.evalV2 ? leadV2(cfg, view) : lead(cfg, view);
         if (l && l.length && E.classify(l, view.trump)) return l;
       } catch (e) { }
+      fb.lead++;
       return M.forceLegalLead(view.hand, view.trump);
     },
     follow: function (view, plays) {
@@ -1870,6 +1863,7 @@ function makeAI(config) {
         const f = cfg.evalV2 ? followV2(cfg, view, plays) : follow(cfg, view, plays);
         if (f && lead0 && E.isLegalFollow(view.hand, lead0, f, view.trump, null)) return f;
       } catch (e) { }
+      fb.follow++;
       return M.forceLegalFollow(view.hand, lead0, view.trump, null);
     },
   };
