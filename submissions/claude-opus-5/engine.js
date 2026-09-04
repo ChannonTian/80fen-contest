@@ -66,18 +66,30 @@ function runToComp(run) {
   return { type: 'tractor', len: run.length, cards, top: run[run.length - 1].top };
 }
 
+/* (花色,点数) -> 0..84 的整数编码。原来分组用 suit + '/' + rank 字符串键,
+ * 每张牌一次拼接一次 Map 查找;decompose 在候选循环里被跑上千次。
+ * 下面用「code -> 组下标」的定长表代替 Map,**插入顺序照旧**(singles 的
+ * 次序依赖它),所以结果逐位相同。 */
+const DSUIT = { S: 0, H: 1, D: 2, C: 3, X: 4 };
+const _slot = new Int8Array(96);      // 组下标 + 1,0 表示还没建组
+let _stamp = 0;
+const _seen = new Int32Array(96);     // 版本戳,免去每次清零
+
 function decompose(cards, trump) {
-  const groups = new Map();
+  const glist = [];
+  /* 版本戳存在 Int32Array 里,超过 2^31 会回绕,比较就失效。一场联赛
+   * decompose 能被调上千万次,所以必须有回绕保护 —— 代价是每 20 亿次
+   * 清一次 96 字节。 */
+  if (++_stamp > 2000000000) { _seen.fill(0); _stamp = 1; }
   for (let i = 0; i < cards.length; i++) {
     const c = cards[i];
-    const k = c.suit + '/' + c.rank;
-    let g = groups.get(k);
-    if (!g) { g = []; groups.set(k, g); }
-    g.push(c);
+    const k = DSUIT[c.suit] * 17 + c.rank;
+    if (_seen[k] !== _stamp) { _seen[k] = _stamp; _slot[k] = glist.length + 1; glist.push([c]); }
+    else glist[_slot[k] - 1].push(c);
   }
   const pairs = [];
   const singles = [];
-  groups.forEach(function (g) {
+  glist.forEach(function (g) {
     let i = 0;
     while (i + 1 < g.length) {
       pairs.push({ cards: [g[i], g[i + 1]], top: ordIdx(g[i], trump) });
