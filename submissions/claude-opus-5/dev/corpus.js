@@ -51,8 +51,10 @@ function cost(factory, seqs, reps) {
 
 const N = parseInt(process.argv[2] || '40', 10);
 const REPS = parseInt(process.argv[3] || '3', 10);
-const cands = [['naive', B.naive], ['pointHog', B.pointHog], ['trumpMiser', B.trumpMiser],
-               ['greedy', B.greedy], ['baseline', () => BASE.makeAI()], ['当前', () => CUR.makeAI()]];
+/* 标尺用冻结引擎版:参照选手若共享我正在优化的 moves.js/engine.js,我的优化
+ * 会漏进标尺里,比值就不再反映「相对主办方基准选手」的真实倍数。 */
+const cands = [['greedy(共享)', B.greedy], ['greedy(冻结)', B.greedyFrozen],
+               ['baseline', () => BASE.makeAI()], ['当前', () => CUR.makeAI()]];
 const extra = process.argv[4] ? JSON.parse(process.argv[4]) : [];
 for (const [nm, cfg] of extra) cands.push([nm, () => CUR.makeAI(cfg)]);
 const us = [], nc = [];
@@ -62,7 +64,7 @@ for (const [, f] of cands) {
   us.push(cost(f, sq, REPS));
 }
 console.log('每人自己的 ' + N + ' 副牌,重放 ' + REPS + ' 遍,cpuUsage 按批计时');
-const g = us[cands.findIndex(c => c[0] === 'greedy')];
+const g = us[cands.findIndex(c => c[0] === 'greedy(冻结)')];
 for (let i = 0; i < cands.length; i++)
   console.log('  ' + cands[i][0].padEnd(12), us[i].toFixed(2).padStart(7) + ' µs',
     '(' + nc[i] + ' 次决策)', '| /greedy ' + (us[i] / g).toFixed(2) + '×',

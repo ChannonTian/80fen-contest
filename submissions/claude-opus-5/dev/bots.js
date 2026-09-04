@@ -2,6 +2,9 @@
 'use strict';
 const E = require('../engine.js');
 const M = require('../moves.js');
+/* 计时标尺专用的冻结引擎,见 dev/frozen/README.md */
+const FE = require('./frozen/engine.js');
+const FM = require('./frozen/moves.js');
 
 /* 模板选手:example/index.js 的行为 */
 function template() {
@@ -209,3 +212,21 @@ function ntForcer() {
 }
 
 module.exports = { template, naive, greedy, pointHog, trumpMiser, sibling, siblingR, ntForcer };
+
+
+/* ---------- 计时标尺:和上面同样的策略,但跑在冻结的引擎上 ----------
+ * 只用于时间预算测量。参照选手若共享我正在优化的 moves.js/engine.js,
+ * 我的优化会漏进标尺里,比值就不再反映「相对主办方基准选手」的真实倍数。 */
+function frozenify(src, name) {
+  return function () {
+    const body = src.toString()
+      .replace(/\bM\./g, '__FM.').replace(/\bE\./g, '__FE.');
+    /* eslint-disable no-new-func */
+    const f = new Function('__FE', '__FM', 'return (' + body + ')')(FE, FM);
+    const ai = f(); ai.name = name; return ai;
+  };
+}
+const greedyFrozen = frozenify(greedy, 'greedyFrozen');
+
+module.exports.greedyFrozen = greedyFrozen;
+
