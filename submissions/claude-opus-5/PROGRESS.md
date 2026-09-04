@@ -393,6 +393,25 @@ mcModel / handModel / ruffFix 三次改进概率模型全部无效。
 | 极端手牌(单门到底 / 全王和级数牌 / 无主)18 次调用 | **0 异常** |
 | 无主局下的棋力 | vs greedy +0.42(比有主局还高);vs 冻结快照 −0.004(不算弱点) |
 
+## 崩溃面 fuzz(`dev/fuzz.js`)—— 抓到「兜底自己会抛」
+
+联赛里抛一次异常就是灾难,而我唯一的防线是五个方法外面的 try/catch。这条防线
+**从来没被验证过**。写了针对性 fuzz:1040 个畸形/极端 view(手牌 0/1/33 张、
+无主局、空历史、重复 id、越界点数、手牌里混 `null`)、5080 次调用,查三件事 ——
+异常有没有逃出 try/catch、兜底返回的着法合不合法、冻结的 view 有没有被改写。
+
+**第一版就抓到真问题:124 次异常穿透。** 三处兜底都写在 `try` **之外**,手牌里
+混进 `null` 时兜底自己又抛一次;`follow` 更靠前的 `E.classify(plays[0].cards)`
+也裸露着。**兜底路径存在的意义就是接住「没想到的输入」,一个自己会抛的兜底不
+算兜底。**
+
+加了 `lastResort`:只做最小假设的切片,永不抛。它返回的着法可能非法(吃罚分),
+但**罚分是有界损失,异常不是** —— §S2 下抛异常直接记违规,而且走的是我控制不
+了的路径。修完:逃逸 0 / 非法 0 / 改写 0,正常对局逐位不变。
+
+`fallbacks` 加了 `hard` 计数。fuzz 里它被触发 **722 次** —— 说明第二层
+(`forceLegalLead` / `forceLegalFollow`)在这些输入下也失败了,这一层不是冗余。
+
 ## 重入审计(`dev/reent.js`)—— 提速引入的新风险类别
 
 这一轮的提速往 `engine/moves/strategy` 里加了不少**模块级可变状态**:版本戳表
@@ -513,13 +532,14 @@ mcModel / handModel / ruffFix 三次改进概率模型全部无效。
    ≥2σ 就到 n≥2500 复测 → 过了才把默认值打开 →
    `cp strategy.js moves.js engine.js dev/baseline/` → 记进本文件
 7. **纯提速类改动**必须用 `roundArena(当前, dev/baseline)` 验到行为差异**恰好 0%**
-8. **改过 engine/moves/strategy 就跑 `node dev/reent.js 40`** —— 里面有一堆模块级
+8. `node dev/fuzz.js` —— 崩溃面:异常逃逸 / 非法着法 / 改写冻结 view 都必须是 0
+9. **改过 engine/moves/strategy 就跑 `node dev/reent.js 40`** —— 里面有一堆模块级
    临时表和复用缓冲,全靠「函数不自嵌套」这个前提;破了不报错,只会静默算错
-9. **时间预算**:`node dev/corpus.js 40 3`,看 `当前 / greedy(冻结)` 那一列,
+10. **时间预算**:`node dev/corpus.js 40 3`,看 `当前 / greedy(冻结)` 那一列,
    README 的淘汰线是 3×。**别用 wall clock,别让标尺引用我的 `moves.js`**,
    两个坑的方向还相反,详见上面「三个坑」那节
-10. **每隔十来轮把否定过的想法整批重测一遍** —— 已经捞回来两个(followCap、dynTempo)
-11. 参照选手在 `dev/yardstick/`(冻结快照),计时标尺在 `dev/frozen/`(**永不更新**),
+11. **每隔十来轮把否定过的想法整批重测一遍** —— 已经捞回来两个(followCap、dynTempo)
+12. 参照选手在 `dev/yardstick/`(冻结快照),计时标尺在 `dev/frozen/`(**永不更新**),
     两者都**不要**引用 `../strategy.js`
 
 ## 交付状态
