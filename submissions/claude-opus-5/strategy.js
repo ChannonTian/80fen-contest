@@ -72,10 +72,10 @@ const DEFAULTS = {
   cvRuffAware: 0.8,
   /* --- 残局采样走子:对静态分最高的几个候选,采样若干个一致的世界走到底再比 --- */
   rollout: true,
-  rolloutMaxCards: 4,        // 手牌 ≤ 这个数才开(跟牌)。5 更强 +0.011,但要多花 10µs,见 PROGRESS
+  rolloutMaxCards: 5,        // 手牌 ≤ 这个数才开(跟牌)。见下面 rolloutMargin 的注释
   rolloutMaxCardsLead: 0,    // 领出单独的深度(0 = 跟 rolloutMaxCards 一样)
-  rolloutK: 6,              // 采样几个世界
-  rolloutM: 4,               // 只精算静态分最高的几个候选
+  rolloutK: 8,               // 采样几个世界
+  rolloutM: 6,               // 只精算静态分最高的几个候选
   rolloutKittyPrior: 4,
   /* --- 中前期领出的截断前瞻:手牌还多的时候走不到底,就只往前推固定几墩,
    *     再用「剩下的牌值多少」当终局评价。代价与手牌张数无关。 --- */
@@ -88,7 +88,16 @@ const DEFAULTS = {
   midTermW: 1.0,             // 终局手牌强度差的权重
   midMinCards: 6,            // 手牌少于这个数就交给残局 rollout
   midMaxCards: 99,           // 手牌多于这个数就不前瞻(牌太多时既贵又不准)
-  rolloutMargin: 0,          // 静态分差距大于这个数就不必精算(0 = 总是精算)
+  /* 静态分差距大于这个数就不必精算(0 = 总是精算)。注意它不是单纯的「领先就
+   * 跳过」闸门:门槛越大,落在门槛内的候选越多,精算的候选数反而增加 —— 所以
+   * 时间对它是非单调的。棋力则是单调递增的(n=3000:mg20 +0.0092 / mg35 +0.0105
+   * / mg50 +0.0113 / mg70 +0.0127 / 无门槛 +0.0143),因为它只是少做 rollout。
+   * 取 50:在 ≤2.7×greedy 的时间预算下最强的点。mg70 只多赚 0.0014 却贴到 2.90×。
+   *
+   * 这一组(margin 50 + maxCards 5 + K8 M6)整体 +0.0113 级/局(3.0σ, n=3000),
+   * 约 2.68× 冻结 greedy。**一行回退**:把这四个值改回 0 / 4 / 6 / 4,回到
+   * ~2.39×、棋力回到已合并版的水平。 */
+  rolloutMargin: 50,
   rolloutSmartLead: true,    // 走子时的领出用「这个世界里压不压得住」来判断
   rolloutSmartFollow: false, // 走子时跟牌也看后手能不能压回来
   rolloutRichLead: false,    // 走子的领出候选补上「每门最小的一张」
