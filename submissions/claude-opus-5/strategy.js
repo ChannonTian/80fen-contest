@@ -172,6 +172,9 @@ const DEFAULTS = {
  *  2) 把「某门里比某个序号大的暗牌有几张」预先做成 O(1) 查表
  * 缓存挂在 AI 实例上(cache 参数),history 变短即认为换了一局。 */
 const ANKEYS = ['T', 'S', 'H', 'D', 'C'];
+/* leadV2 去重用的临时表:id -> 手牌下标。只写手牌用到的槽位,只读候选里的牌
+ * (必是手牌的子集),陈旧槽位读不到,不用清零。leadV2 不会被重入。 */
+const LIDX = new Int8Array(108);
 
 function analyze(view, cache) {
   const trump = view.trump || { suit: null, rank: view.trumpRank };
@@ -1666,9 +1669,17 @@ function leadV2(cfg, view) {
   const scored = useRoll ? [] : null;
   const scoredMid = useMid ? [] : null;
   const seen = new Set();
+  /* 去重键:原来是 map(id).sort().join(',') —— 每个候选两个数组、两个闭包、
+   * 一个字符串。候选都是手牌的子集,所以「手牌下标位掩码」是单射的。
+   * 掩码只在手牌 ≤31 张时可靠(领出时至多 25 张,但别人改代码不一定记得),
+   * 超了就退回字符串键。 */
+  const useMask = hand.length <= 31;
+  if (useMask) for (let i = 0; i < hand.length; i++) LIDX[hand[i].id] = i;
   for (let i = 0; i < cands.length; i++) {
     const cd = cands[i];
-    const key = cd.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
+    let key;
+    if (useMask) { key = 0; for (let j = 0; j < cd.length; j++) key |= (1 << LIDX[cd[j].id]); }
+    else key = cd.map(function (c) { return c.id; }).sort(function (x, y) { return x - y; }).join(',');
     if (seen.has(key)) continue;
     seen.add(key);
     const cl = E.classify(cd, trump);

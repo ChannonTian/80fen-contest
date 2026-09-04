@@ -8,6 +8,11 @@
  * 只读 cand 里的牌(必是手牌的子集),所以陈旧槽位永远读不到,不用清零。
  * 该函数不会被重入(它调用的几个函数都不回头调它)。 */
 const IDX = new Int8Array(108);
+/* genFills 的临时表:id -> rest 下标,外加一个版本戳表用来判「这张牌在不在
+ * rest 里」。戳存在 Int32Array 里,超过 2^31 会回绕,所以要有回绕保护。 */
+const FIDX = new Int8Array(108);
+const FSEEN = new Int32Array(108);
+let FSTAMP = 0;
 const E = require('./engine.js');
 
 const DEF = { strictTractorFollow: true, partialTractorFollow: true };
@@ -263,11 +268,32 @@ function genFills(rest, j, trump, cap, leadCl) {
   if (j === 0) return [[]];
   const out = [];
   const seen = new Set();
+  /* 去重键:原来是 map(id).sort().join(',') —— 每次 push 两个数组、一个闭包、
+   * 一个字符串。改成「rest 下标位掩码」。掩码只在下标 <32 且每张牌都在 rest
+   * 里时可靠,两个条件任一不成立就退回原来的字符串键(宁可慢,不可静默少去重
+   * —— 丢掉合法候选是不报错的)。 */
+  const canMask = rest.length <= 31;
+  if (canMask) { for (let i = 0; i < rest.length; i++) FIDX[rest[i].id] = i; }
+  if (FSTAMP > 2000000000) { FSEEN.fill(0); FSTAMP = 0; }
+  const fstamp = ++FSTAMP;
+  if (canMask) { for (let i = 0; i < rest.length; i++) FSEEN[rest[i].id] = fstamp; }
   function push(cards) {
     if (!cards || cards.length !== j) return;
-    const ids = cards.map(function (c) { return c.id; }).sort().join(',');
-    if (seen.has(ids)) return;
-    seen.add(ids); out.push(cards);
+    let key = -1;
+    if (canMask) {
+      let m = 0, ok = true;
+      for (let i = 0; i < cards.length; i++) {
+        const id = cards[i].id;
+        if (FSEEN[id] !== fstamp) { ok = false; break; }
+        m |= (1 << FIDX[id]);
+      }
+      if (ok) key = m;
+    }
+    if (key === -1) {
+      key = cards.map(function (c) { return c.id; }).sort().join(',');
+    }
+    if (seen.has(key)) return;
+    seen.add(key); out.push(cards);
   }
   const trumps = [], offs = [];
   for (let i = 0; i < rest.length; i++) {
