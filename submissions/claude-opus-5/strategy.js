@@ -1969,7 +1969,25 @@ function makeAI(config) {
    * 「最笨的合法着法」—— 局照打、零违规,但棋力会被打回原形。
    * 这里把兜底次数记下来,开发期一眼就能看见,不然这种 bug 会藏很久
    * (自对弈 A/B 对「两边一起变差」是结构性失明的)。 */
-  const fb = { deal: 0, rebel: 0, discard: 0, lead: 0, follow: 0 };
+  const fb = { deal: 0, rebel: 0, discard: 0, lead: 0, follow: 0, hard: 0 };
+
+  /* 最后一层:只做最小假设的切片,**永不抛**。
+   * 第一版的兜底写在 try 之外 —— fuzz 出畸形 view(手牌里混 null)时兜底自己
+   * 又抛一次,异常直接穿透。兜底路径存在的意义就是接住「没想到的输入」,一个
+   * 自己会抛的兜底不算兜底。这一层返回的着法可能非法(吃罚分),但罚分是有界
+   * 损失,异常不是 —— §S2 下抛异常直接记违规,而且是我控制不了的路径。 */
+  function lastResort(view, k) {
+    fb.hard++;
+    const out = [];
+    try {
+      const h = view && view.hand;
+      if (h && h.length) {
+        for (let i = 0; i < h.length && out.length < k; i++) if (h[i]) out.push(h[i]);
+      }
+    } catch (e2) { /* 连 view.hand 都读不到,只能交空数组 */ }
+    return out;
+  }
+
   return {
     name: config && config.name ? config.name : 'claude-opus-5',
     cfg: cfg,
@@ -1982,8 +2000,11 @@ function makeAI(config) {
         if (d && d.length === 8) return d;
       } catch (e) { }
       fb.discard++;
-      const h = view.hand.slice().sort(function (x, y) { return M.junkScore(x, view.trump) - M.junkScore(y, view.trump); });
-      return h.slice(0, 8);
+      try {
+        const h = view.hand.slice().sort(function (x, y) { return M.junkScore(x, view.trump) - M.junkScore(y, view.trump); });
+        if (h.length >= 8) return h.slice(0, 8);
+      } catch (e) { }
+      return lastResort(view, 8);
     },
     lead: function (view) {
       try {
@@ -1991,16 +2012,28 @@ function makeAI(config) {
         if (l && l.length && E.classify(l, view.trump)) return l;
       } catch (e) { }
       fb.lead++;
-      return M.forceLegalLead(view.hand, view.trump);
+      try {
+        const l = M.forceLegalLead(view.hand, view.trump);
+        if (l && l.length) return l;
+      } catch (e) { }
+      return lastResort(view, 1);
     },
     follow: function (view, plays) {
-      const lead0 = E.classify(plays[0].cards, view.trump);
+      let lead0 = null, k = 1;
+      try {
+        lead0 = E.classify(plays[0].cards, view.trump);
+        k = plays[0].cards.length;
+      } catch (e) { }
       try {
         const f = cfg.evalV2 ? followV2(cfg, view, plays) : follow(cfg, view, plays);
         if (f && lead0 && E.isLegalFollow(view.hand, lead0, f, view.trump, null)) return f;
       } catch (e) { }
       fb.follow++;
-      return M.forceLegalFollow(view.hand, lead0, view.trump, null);
+      try {
+        const f = M.forceLegalFollow(view.hand, lead0, view.trump, null);
+        if (f && f.length) return f;
+      } catch (e) { }
+      return lastResort(view, k);
     },
   };
 }
