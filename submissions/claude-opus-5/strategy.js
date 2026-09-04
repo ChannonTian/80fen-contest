@@ -1480,8 +1480,18 @@ function quickMove(hands, seat, trump, plays, leadCl, smart, rich) {
 }
 
 /* 从当前局面走到这一局结束,返回「对我方的净分」 */
+/* 走子用的复用手牌缓冲。playoutValue 不会被重入(quickMove 不回头调它),而
+ * 一次决策要跑 M×K 遍走子,原来每遍要新建四个数组。truncPlayout 用另一组,
+ * 免得两者互相踩(虽然它们也不互调)。 */
+const _PH = [[], [], [], []];
+
 function playoutValue(hands0, trump, plays0, leader, myTeam, kittyPts, declTeam, smart, rich) {
-  const H = [hands0[0].slice(), hands0[1].slice(), hands0[2].slice(), hands0[3].slice()];
+  const H = _PH;
+  for (let p = 0; p < 4; p++) {
+    const src = hands0[p], dst = H[p];
+    dst.length = src.length;
+    for (let i = 0; i < src.length; i++) dst[i] = src[i];
+  }
   const teamPts = [0, 0];
   let cur = plays0.slice();
   let lead = E.classify(cur[0].cards, trump);
@@ -1611,18 +1621,28 @@ function rolloutPick(cfg, a, view, scored, plays, leadCl) {
   const kp = (view.buriedKnown && view.buriedKnown.length)
     ? E.countPoints(view.buriedKnown) : cfg.rolloutKittyPrior;
   let best = scored[0].cd, bv = -1e9;
+  const smart = cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0);
+  const ldr = plays ? plays[0].seat : view.seat;
+  const hands = [null, null, null, null];        // 复用:playoutValue 只读它
   for (let i = 0; i < m; i++) {
     const cd = scored[i].cd;
     const ids = new Set();
     for (let j = 0; j < cd.length; j++) ids.add(cd[j].id);
+    /* pl 和 ldr 不依赖世界,原来在世界循环里每次重建一个数组加一个对象。 */
+    const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
+    /* 我自己的手牌在每个世界里是同一个数组(sampleWorlds 里 hands[me] =
+     * view.hand),所以「出掉这一手之后的手牌」也一样 —— 原来算了 K 遍。
+     * 这里按数组身份缓存:万一以后 sampleWorlds 改成每个世界一份拷贝,
+     * 身份不同就会自然退回逐世界计算,结果仍然正确。 */
+    let cachedSrc = null, cachedAfter = null;
     let tot = 0;
     for (let w = 0; w < worlds.length; w++) {
-      const hands = worlds[w].slice();
-      hands[view.seat] = dropIds(hands[view.seat], ids);
-      const pl = plays ? plays.concat([{ seat: view.seat, cards: cd }]) : [{ seat: view.seat, cards: cd }];
-      const ldr = plays ? plays[0].seat : view.seat;
-      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam,
-        cfg.rolloutSmartFollow ? 2 : (cfg.rolloutSmartLead ? 1 : 0), cfg.rolloutRichLead);
+      const wh = worlds[w];
+      const src = wh[view.seat];
+      if (src !== cachedSrc) { cachedSrc = src; cachedAfter = dropIds(src, ids); }
+      hands[0] = wh[0]; hands[1] = wh[1]; hands[2] = wh[2]; hands[3] = wh[3];
+      hands[view.seat] = cachedAfter;
+      tot += playoutValue(hands, trump, pl, ldr, view.myTeam, kp, declTeam, smart, cfg.rolloutRichLead);
     }
     if (tot > bv) { bv = tot; best = cd; }
   }
