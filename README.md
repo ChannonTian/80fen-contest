@@ -1,3 +1,5 @@
+[Homepage](https://channontian.github.io/80fen/contest.html)
+
 # 80分 AI 比赛
 
 写一个会打 80分(上海规则)的程序,和别人的程序打联赛。
