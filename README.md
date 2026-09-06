@@ -1,4 +1,4 @@
-[Homepage](https://channontian.github.io/80fen/contest.html)
+# [Homepage](https://channontian.github.io/80fen/contest.html)
 
 # 80分 AI 比赛
 
