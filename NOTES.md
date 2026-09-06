@@ -1,5 +1,7 @@
-### claude-opus-5 (max) + claude-code
-~70% of weekly pro plan (with 50% more claude code quota) in ~6 hours
+# Contestant stats
+## claude-opus-5 (max) + claude-code
+~70% of weekly pro plan (with 50% more claude code quota) in ~6 hours;
+1st to submit.
 
 self-evaluated stats:
 - input cache hit	345,436,239
@@ -54,12 +56,10 @@ PROGRESS.md 里记了 30 条带 σ 的测量、134 行表格
 我生成 2 小时 49 分(1097 条消息)。这才是"我实际工作"的时长。
 两者相加 5:52,和 6:15 的差(约 23 分钟)是消息往返和调度开销。
 
-### gpt-5.6-sol (xhigh) + codex:
-
-
-### deepseek-v4-pro (max) + deepseek-harness
+## deepseek-v4-pro (max) + deepseek-harness
 approx. $6.9 in 2 hours.
 14 turns · 426 steps| LLM 111m24s · Tool call 18m58s| TTFT avg 2.7s · 70 tok/s | 99.8% cache hit, 133M in, 386K out
+2nd to submit.
 
 self-evaluated stats:
 
@@ -98,7 +98,47 @@ M
 纯计算（压测/跑分累计）：按每次 bench 输出的"用时"汇总 ≈ 5–10 分钟。
 模拟规模（保守口径，1 对=2 场）：完整对局 ≥1.2 万场（约 40 万局），另加单局口径跑分约 2.5 万局。
 
+## GLM-5.3 (max) + ZCode
+65M tok in 4.5 h, 2 limit stops.
+3rd to submit.
+
+用量(用户端实测口径):65M token / 活跃 4.5 小时。
+墙钟跨度 09-04 07:19 → 09-06 10:01(约 2 天 3 小时),会话被 limit 切断 2 次,
+均靠 PROGRESS.md 续命,上下文压缩 0 次。
+口径提醒:GLM 侧看不到 API 层的缓存读写拆分,65M 是账号侧计数,与其他选手的
+355M-in(97.3% 缓存命中)不是同一尺度。
+
+工具调用(日志实测 854 次):
+Bash 341(40%) · Edit 296(35%) · TaskOutput 123 · Read 38 · Write 30 ·
+TodoWrite 22 · WebFetch 2 · TaskStop 2。用户侧文本输入 10 条。
+
+产出:
+- 提交件(裁判加载的三个文件)1,382 行(index/engine/moves)
+- 开发工具 dev/ 8 个脚本 979 行;baseline 冻结快照 1,382 行
+- 文档(NOTES+PROGRESS)246 行;git 提交 1 个,PR #5
+
+实验密度:
+- DEFAULTS 42 个配置项:5 个布尔默认开、5 个默认关(试过量过没留下)、32 个数值参数
+- PROGRESS.md 记录 34 个带 σ 的测量(四代增益族 + 两段空轮段)
+- §S5 自测 92 条断言;2 万例着法模糊合法性测试(每次改动后跑)
+- 全程 sweep ≈ 3.7 万配对 ≈ 7.5 万场整场(约 220 万局);终版验收 1,200 场零违规
+
+结果:24.6µs/决策(1.6× greedy);对 6 种参照(含同门旧权重 sibling)全部正收益,
+sibling +19.9 级(73.7% 整场胜率);无主局专项 +13.8σ。
+
 ### kimi-k3 (max) + kimi-code:
+4th to submit.
 
+### gpt-5.6-sol (xhigh) + codex
+90% Plus plan weekly quota used in 5h38m.
+5th to submit.
 
-### z.ai-glm-5.3 (max) + zcode:
+- 参赛者 / 模型：`gpt-5.6-sol`。
+- 工作日期：2026-09-04 至 2026-09-06。
+- 长程目标跟踪器到第 30 轮才创建；它在首次完成时记录 **2,531,917 tokens、20,299 秒（约 5 小时 38 分）**。这不是整个任务的 token 总量：第 1–29 轮和完成后的规则同步、补测、整理文档及提交 PR 均未计入。
+- Plus 周窗口从用户记录的 17% 增至主任务收工时的 90%；完成追加补测和 PR 后为 **94%**，共增加约 77 个百分点。Plus 接口不提供周窗口的 token 容量，因此无法可靠换算整个任务的绝对 token 总数。
+- 最终五小时窗口为 **94%**，未使用免费重置额度。
+- 正式策略迭代 **111 轮**；最终 baseline 为 R103，之后连续 8 轮没有量到稳健进步，并完成全局复盘。
+- 最终稳定性批次共 **4,908 局**，零异常、零违规。
+- 跑分器零偏校准共 **1,487,832 次决策**，行为差异和分差严格为零。
+- 按 README 的 CPU 计时口径，丢弃前两场预热后测 10 场：单方中位数 **0.1067 秒/场**，最慢 0.1308 秒/场，最慢单次决策 6.547 ms。
