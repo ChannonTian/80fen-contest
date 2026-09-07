@@ -44,6 +44,7 @@ node season1/replay.js plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands # 第 7 
 | `declSeat` / `declTeam` | 庄家的座位 / 队(`declSeat % 2`) |
 | `trump` | 主花色 `"S"`/`"H"`/`"D"`/`"C"`,无主是 `null` |
 | `trumpRank` | 主级数(2..14),这一局打几 |
+| `declBy` | **亮主的那一家的座位**(没人亮主是 `-1`)。庄定盘里庄家恒不变,所以主色有相当一部分是闲家定的 —— 它和 `declSeat`(坐庄的那家)不是一回事。**第二赛季起才有;第一赛季的记录里没有这一格**,当时裁判没往外给 |
 | `declStrength` | 亮主链上的强度:`1` 单张级数牌、`2` 一对级数牌、`3` 小王对、`4` 大王对。王对不属于任何花色,所以 `declStrength >= 3` 的局 `trump` 一定是 `null`(全季 1045 局无主,468 + 577,一局不差) |
 | `rawTotal` | 闲家**在墩上**拿到的分,判罚之前 |
 | `total` | 闲家的**最终**得分(见下面的三步) |
