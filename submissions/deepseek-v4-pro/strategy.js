@@ -26,6 +26,7 @@ const TUNE = {
   DISC_GREEDY: true,
   /* ===== 领出 ===== */
   LEAD_BOSS: 34, LEAD_SIZE: 8, LEAD_TRUMP_PEN: 26,
+  DECL_TRUMP_DAMP: 0,  // 庄家开局吊主削减(oracle:0-7墩我方领主 2.3× 烧穿主牌预算,预估 +0.05~0.10 级/庄家局)
   DRAW_UNIT: 6, DRAW_CAP: 30, LEAD_WEAK_TRUMP: 14,
   TIAO_WANG: true, FEED_RUFF: true, THROW_SUBSET: true,
   /* ===== 跟牌 ===== */
@@ -35,6 +36,7 @@ const TUNE = {
   EG: true, EG_FOLLOW: true, EG_MAX_CARDS: 6, EG_SAMPLES: 40, EG_MIN: 20,
   EG_RETRIES: 24, EG_MAX_CANDS: 6, EG_MARGIN: 0.03, EG_PTS_EPS: 0.008,
   EG_KITTY_PRIOR: true,   // 差异化:世界采样按埋底策略先验加权
+  EG_SAMPLES_DECL: 40,  // 庄家视角采样数(默认与 EG_SAMPLES 同;防守已优于基线,集中火力修进攻)
   EG_SOFT_SAMPLE: true,  // 差异化:软推断加权采样(Kermit 式)
   EG_OWN_MEM: true,       // 差异化:rollout 用各家自己的最小记牌
   /* ===== 权重(跟牌 EV) ===== */
@@ -42,6 +44,7 @@ const TUNE = {
   CAPTURE_BONUS: 0,     // 吃墩候选的牌权/控制加成(贪心对照实验;0=关)
   GREEDY_CAPTURE: false, // 有吃法时只在吃法里选(贪心优先),无吃法才用全排序;实测纯贪心最优
   FOLLOW_GREEDY: true,   // 跟牌默认贪心:按候选生成顺序选(最省吃法优先),不打分排序。实测胜纯打分 +2.33±0.64 级/场(t=3.62)
+  FOLLOW_GREEDY_NONCAP: false, // 贪心模式下,无吃法候选时改按打分选垫/跟/贴(隔离「非吃法打分」的贡献)
   DUMP_SAFE_P: 0,       // 队友贴分确定性门槛(pSurvive(队友那手) ≥ 此值才贴;0=无条件贴,贪心默认)
   GUARD_FIRST: true,    // 毙得够高(oppSpendCeil 版)排在最小吃法前(贪心生成顺序)
   RUFF_VOID_BEHIND_SKIP: false, // 后手有已知断门对手时,贪心路径跳过毙牌候选(官方 cf-ruff:该场景不毙 +1.32~2.11/次)
@@ -54,10 +57,12 @@ const TUNE = {
   DUMP_PARTNER: 0.85, DUMP_OPP: 0.85, HAND_SHARE: 4,
   P_PARTNER_TAKES: 0.18, P_NO_PARTNER: 0.02,  // 0.32 是官方在其 EV 结构下标定的权重;阶梯效用下取实测救回率 0.18
   RUFF_STRUCT: [0.85, 0.45, 0.25], SIDE_RESERVE_DAMP: 0.6,
-  END_KITTY_W: 5.0, KITTY_BIAS: 0.8,
+  END_KITTY_W: 5.0, KITTY_BIAS: 0.8, KITTY_HZ_MAX: 16, KITTY_HZ_BASE: 5,  // 护底视野:hz = clamp(5, max, base + kp*0.25);base=5 旧口径,kp≈10 时 ≈7.5 张才发
   /* 结构代价 */
   BREAK_PAIR_W: 5, VOID_GAIN_W: 6,
   PAIR_BONUS: 8,       // 领出对子/拖拉机的牌型加成(实测 8 > 4:+1.35 级/场)
+  OPEN_PAIR_BONUS: 0,  // 庄家开局(trickNo=0)领出对子/拖拉机加成(基线开局对子率 50% vs 我 31%)
+  THROW_BONUS: 0,       // 甩牌领出加成(cf2:换成甩牌 +0.16 级/次,n=49)
 };
 
 const SUITS = ['S', 'H', 'D', 'C'];
@@ -251,6 +256,7 @@ function buildTrack(view, cfg) {
   const track = {
     trump, me, seen, unseen, voids, reads, defPts, tricksDone, hsize, unseenTotal,
     getSuit, maxHoldIn, pVoidOf, holdLo, unseenPtsIn, kittyPtsEst,
+    cfg,
     declTeam: view.declSeat % 2,
     isDecl: view.myTeam === (view.declSeat % 2),
     handLen: view.hand.length,
@@ -486,7 +492,7 @@ function futureValue(track, view, cards) {
   /* 护底 flat 项:收官视野内,底分 × 动态倍数 × 视野折扣,只发给护底单元 */
   const kp = track.kittyPtsEst();
   if (kp > 0) {
-    const hz = Math.max(5, Math.min(12, 5 + kp * 0.25));
+    const hz = Math.max(5, Math.min(track.cfg.KITTY_HZ_MAX, track.cfg.KITTY_HZ_BASE + kp * 0.25));
     const len = view.hand.length;
     if (len <= hz) {
       const ru = reserveUnit(track, view);
@@ -1057,9 +1063,15 @@ function follow2(view, plays, cfg) {
     const mf = minFollow(track, hand, leadCl, false);
     if (E.isLegalFollow(hand, leadCl, mf, trump)) return mf;
   }
+  /* 贪心首选 = 生成顺序第一合法候选(排序前快照,探针用它标记) */
+  const greedyFirst = cands[0];
   let pickCands = cands;
   if (!cfg.FOLLOW_GREEDY) {
     cands.sort((a, b) => b.sc - a.sc);
+  } else if (cfg.FOLLOW_GREEDY_NONCAP) {
+    /* 贪心 + 非吃法按打分:只在没有吃法候选时激活(保持贪心的吃法优先) */
+    const hasCap = cands.some(c => c.beats);
+    if (!hasCap) cands.sort((a, b) => b.sc - a.sc);
   }
   if (cfg.GREEDY_CAPTURE) {
     const caps = cands.filter(c => c.beats);
@@ -1365,10 +1377,10 @@ function lead2(view, cfg) {
     let sc, pWin;
     if (cl.type === 'throw') {
       if (boss && !ruffable) {
-        sc = 68 + L * 3 + leadPointsEV(track, view, cl, cd.cards) * 1.4 - fut * 0.35;
+        sc = 68 + L * 3 + leadPointsEV(track, view, cl, cd.cards) * 1.4 - fut * 0.35 + cfg.THROW_BONUS;
         pWin = 0.95;
       } else {
-        sc = 5 - pts * 4;
+        sc = 5 - pts * 4 + cfg.THROW_BONUS * 0.5;
         pWin = 0.3;
       }
     } else if (boss) {
@@ -1384,6 +1396,7 @@ function lead2(view, cfg) {
         if (track.isDecl && trumpLeft > 0 && myTrumps >= 6) sc += 12 * Math.min(1, myTrumps / 10) * Math.min(1, trumpLeft / 8);
       }
       if (es !== 'T' && ruffable) sc -= (35 + (pts ? 10 : 0)) * oppVoidP;
+      if ((cl.type === 'pair' || cl.type === 'tractor') && view.trickNo === 0 && view.seat === view.declSeat) sc += cfg.OPEN_PAIR_BONUS;
       pWin = es === 'T' ? 0.97 : 0.95 * (1 - oppVoidP);
     } else {
       /* 非钢板:统一 EV */
@@ -1395,10 +1408,12 @@ function lead2(view, cfg) {
       else sc = (p * gain - (1 - p) * loss);
       if (cl.type === 'tractor') sc += cfg.PAIR_BONUS * (L - 1);
       else if (cl.type === 'pair') sc += cfg.PAIR_BONUS;
+      if ((cl.type === 'tractor' || cl.type === 'pair') && view.trickNo === 0 && view.seat === view.declSeat) sc += cfg.OPEN_PAIR_BONUS;
       if (es === 'T') {
         const dt = drawTrumpValue(track, view);
         if (cl.type === 'single') {
           sc += Math.min(0, dt) + p * Math.max(0, dt) - cfg.LEAD_WEAK_TRUMP * (1 - p) + tiaoWangValue(track, view, cl, cd.cards);
+          if (track.isDecl && phase === 'open') sc -= cfg.DECL_TRUMP_DAMP;
         } else {
           /* 对子/拖拉机:claude 口径 —— 不吞负 dt(那是对单张弱主领出的先验),
            * 庄家方主厚时给吊主正奖励 */
@@ -1749,8 +1764,8 @@ function endgameSearch(view, plays, cands, cfg, track) {
   if (view.declSeat === undefined || view.declSeat < 0) return null;
   if (cands.length < 2 || cands.length > cfg.EG_MAX_CANDS) return null;
   const worlds = cfg.EG_SOFT_SAMPLE
-    ? SMP.sampleWorldsSoft(track, view, cfg.EG_SAMPLES, cfg)
-    : sampleWorlds(track, view, cfg.EG_SAMPLES, cfg);
+    ? SMP.sampleWorldsSoft(track, view, track.isDecl ? cfg.EG_SAMPLES_DECL : cfg.EG_SAMPLES, cfg)
+    : sampleWorlds(track, view, track.isDecl ? cfg.EG_SAMPLES_DECL : cfg.EG_SAMPLES, cfg);
   if (worlds.length < cfg.EG_MIN) return null;
   const trump = view.trump;
   const declTeam = view.declSeat % 2;
