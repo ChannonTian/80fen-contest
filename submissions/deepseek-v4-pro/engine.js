@@ -238,17 +238,20 @@ function canBeatComp(suitCards, comp, trump) {
 function checkThrow(hands, seat, cards, trump) {
   const lead = classify(cards, trump);
   if (!lead || lead.type !== 'throw') return { ok: true };
+  /* v0.7.16 口径:先找齐「被压住的」组件,再在其中挑 (张数, top) 字典序最小的一组。 */
+  const beaten = [];
   for (const comp of lead.comps) {
     for (let p = 0; p < 4; p++) {
       if (p === seat) continue;
       const sc = hands[p].filter(c => effSuit(c, trump) === lead.suit);
-      if (canBeatComp(sc, comp, trump)) {
-        const lowest = lead.comps.reduce((a, c) => c.top < a.top ? c : a);
-        return { ok: false, forced: lowest.cards };
-      }
+      if (canBeatComp(sc, comp, trump)) { beaten.push(comp); break; }
     }
   }
-  return { ok: true };
+  if (!beaten.length) return { ok: true };
+  const size = c => c.cards.length;
+  const lowest = beaten.reduce((a, c) =>
+    size(c) !== size(a) ? (size(c) < size(a) ? c : a) : (c.top < a.top ? c : a));
+  return { ok: false, forced: lowest.cards };
 }
 
 /* ---------------- 亮主/反主/造反/加固 ---------------- */
