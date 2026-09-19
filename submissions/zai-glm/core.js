@@ -1,10 +1,3 @@
-/* ============================================================
- * 出处与许可:本文件 fork 自 ChannonTian/80fen 的 index.html 块①
- * (版本 v0.7.14,Apache-2.0,见该 repo 根目录 LICENSE)。
- * 官方 contest/baseline.js 头部明示「参赛者的起点:想改进而不是
- * 从零写的,直接 fork 这个文件」。zai-glm 的第二赛季改进
- * (AIP.s2* 开关,详见本目录 PROGRESS.md)全部加在这份基座之上。
- * ============================================================ */
 
 /* ============================================================
  * 80分 游戏引擎 —— 纯函数,不碰 DOM。
@@ -192,10 +185,25 @@ function isLegalFollow(hand, lead, chosen, trump){
 
 // ---- 一墩胜负 ----
 function structSig(comps){ return comps.map(c=>c.type+(c.len||'')).sort().join(','); }
+/* v0.7.17 口径:候选的组件可以**拆**,不能**并** —— 一对主盖得住「两张单」的甩牌,
+ * 一副主拖拉机盖得住两个不相连的对子;反过来不行。旧版要求组件多重集逐字相同,
+ * 于是主对毙两张单的甩牌被整个跳过,甩牌方反而收墩(§J 第 4 处已知偏差,已修)。 */
 function structMatches(cand, lead){
-  const a=cand.type==='throw'?cand.comps:[cand];
-  const b=lead.type==='throw'?lead.comps:[lead];
-  return structSig(a)===structSig(b);
+  if(cand.cards.length!==lead.cards.length) return false;
+  const runs=x=>(x.type==='throw'?x.comps:[x])
+    .filter(c=>c.type!=='single').map(c=>c.type==='tractor'?c.len:1).sort((a,b)=>b-a);
+  const need=runs(lead), cap=runs(cand);
+  const fit=(i)=>{
+    if(i===need.length) return true;
+    for(let j=0;j<cap.length;j++){
+      if(cap[j]<need[i]) continue;
+      cap[j]-=need[i];
+      if(fit(i+1)) return true;
+      cap[j]+=need[i];
+    }
+    return false;
+  };
+  return fit(0);
 }
 
 function resolveTrick(plays, trump){
@@ -223,17 +231,21 @@ function canBeatComp(suitCards, comp, trump){
 function checkThrow(hands, seat, cards, trump){
   const lead=classify(cards,trump);
   if(!lead||lead.type!=='throw') return {ok:true};
-  for(const comp of lead.comps){
+  /* v0.7.16 口径:先把**被压住的**组件全找齐(不是找到一个就收工),罚出只在这些里挑
+   * 「最小」—— 先比张数(单张<对子<拖拉机),张数相同再比 top(§J 第 3 处已知偏差,已修)。 */
+  const beaten=lead.comps.filter(comp=>{
     for(let p=0;p<4;p++){
       if(p===seat) continue;
       const sc=hands[p].filter(c=>effSuit(c,trump)===lead.suit);
-      if(canBeatComp(sc,comp,trump)){
-        const lowest=lead.comps.reduce((a,c)=>c.top<a.top?c:a);
-        return {ok:false, forced:lowest.cards};
-      }
+      if(canBeatComp(sc,comp,trump)) return true;
     }
-  }
-  return {ok:true};
+    return false;
+  });
+  if(!beaten.length) return {ok:true};
+  const size=c=>c.cards.length;
+  const lowest=beaten.reduce((a,c)=>
+    size(c)!==size(a) ? (size(c)<size(a)?c:a) : (c.top<a.top?c:a));
+  return {ok:false, forced:lowest.cards};
 }
 
 // ---- 亮主/反主/造反/加固 ----
@@ -583,6 +595,17 @@ const AIP = {                 // v3 可调参数,全部集中在这里便于调�
   s2KittySeat: 1.0,   // 底牌伪座位整体权重系数(调「多早开始往底牌分流」)
   s2TeamMax: 0,      // 推演里我方席位用增强策略(底分活着的收官抢牌权/抠底尺寸),对手保持原走子
   s2TeamMaxEnd: 4,   // 增强策略的「收官」判定:各家手牌 ≤ 此数
+  s2Cross: 0,        // 跨线触发式中盘搜索:闲家分贴近某条阶梯线时,对 top 候选跑小样本 PIMC
+  s2CrossMax: 14,    // 触发的手牌上限(超过收官搜索 8 张的空白段)
+  s2CrossSamples: 10,// 触发时的世界数(少样本,只为比出方向)
+  s2CrossMin: 6,     // 触发时的最少有效世界
+  s2CrossCands: 4,   // 触发时取启发式前几名候选
+  s2CrossNear: 10,   // 线的「前方」触发窗口(线−def ∈ [−5, +此值])
+  s2OppFight: 0,     // 推演里对手「能吃就吃」(不止台面有分才争)——修正 PIMC 对我方候选的乐观偏置
+  s2BandSamples: 0,  // 波段搜索:>0 时,n∈[s2BandLo,s2BandHi] 的中盘决策用这么多满样本搜索
+  s2BandLo: 11,      // 波段下沿(实测:9-10 张搜索零增益,11-12 张单独值 ~+2.1 级/场)
+  s2BandHi: 12,      // 波段上沿
+  s2BandCands: 4,    // 波段内取启发式前几名(候选少=省时间)
   bossSize: 8,                // 每多一张的加成(对子/拖拉机更难被压)
   leadTrumpPenalty: 26,       // 未到收官时领出主牌钢板的折扣
   drawTrumpUnit: 6,           // 吊主:我方每比对手多一张主牌值多少分
@@ -2666,7 +2689,7 @@ function aiChooseFollow(view, plays){
              curSeat:X.cur.seat,curBoss:X.curBoss,leadSuit:lead.suit,phase:X.phase};
   if(cands.length){
     let best=cands[0];
-    const eg=endgameSearch(view,plays,cands.slice(0,AIP.egMaxCands));
+    const eg=maybeEg(view,plays,cands.slice(0,AIP.egMaxCands));
     if(eg){
       const cur=eg.find(o=>o.cards===best.cards);
       const top=eg.slice().sort((a,b)=>b.u-a.u)[0];
@@ -3636,6 +3659,13 @@ function rolloutToEnd(st){
       const lead=classify(plays[0].cards,trump);
       let cards=world?rolloutFollow2(hands[seat],lead,trump,plays,seat,world)
                      :rolloutFollow(hands[seat],lead,trump,plays,seat);
+      if(AIP.s2OppFight&&!world&&st.myTeam!==undefined&&seat%2!==st.myTeam){
+        const cw=currentWinner(plays,trump);
+        if(cw.seat%2!==seat%2){
+          const w2=minWinFollow(hands[seat],lead,trump,cw.cl,false);
+          if(w2&&isLegalFollow(hands[seat],lead,w2,trump)) cards=w2;
+        }
+      }
       if(teamMax&&!world&&seat%2===st.myTeam){
         const tm=teamFollow(hands[seat],lead,trump,plays,seat,st);
         if(tm) cards=tm;
@@ -3670,13 +3700,14 @@ function levelUtility(sc, myTeam, declTeam){
   return gain-lose+AIP.egPointsEps*myPts;
 }
 
-/* 对一组候选做收官搜索。返回 [{cards, u}] 或 null(条件不满足/预算不够) */
-function endgameSearch(view, plays, cands){
+/* 对一组候选做收官搜索。返回 [{cards, u}] 或 null(条件不满足/预算不够)。
+ * ov(可选):{maxN,nSamp,minSamples,maxC} —— s2Cross 触发时用小预算覆盖。 */
+function endgameSearch(view, plays, cands, ov){
   if(!AIP.egSearch) return null;
   const trump=view.trump;
   const n=view.hand.length;
-  const maxN=AIP.s2Depth>0?AIP.s2Depth:AIP.egMaxCards;
-  const maxC=AIP.s2Cands>0?AIP.s2Cands:AIP.egMaxCands;
+  const maxN=(ov&&ov.maxN)||(AIP.s2Depth>0?AIP.s2Depth:AIP.egMaxCards);
+  const maxC=(ov&&ov.maxC)||(AIP.s2Cands>0?AIP.s2Cands:AIP.egMaxCands);
   if(n<1||n>maxN) return null;
   if(view.declSeat===undefined||view.declSeat<0) return null;
   if(cands.length<2||cands.length>maxC) return null;   // 只有一个候选,没什么可搜的
@@ -3711,12 +3742,12 @@ function endgameSearch(view, plays, cands){
   const rs=roundScore(view);
   const uOf=sc=>mm?levelUtility2(sc,myTeam,declTeam,mm):levelUtility(sc,myTeam,declTeam);
   const worlds=[];
-  const nSamp=AIP.s2SamplesBy>0?Math.max(AIP.egMinSamples,AIP.egSamples-AIP.s2SamplesBy*(n-5)):AIP.egSamples;
+  const nSamp=(ov&&ov.nSamp)||(AIP.s2SamplesBy>0?Math.max(AIP.egMinSamples,AIP.egSamples-AIP.s2SamplesBy*(n-5)):AIP.egSamples);
   for(let i=0;i<nSamp;i++){
     const w=sampleWorld(ctx,rand);
     if(w) worlds.push(w);
   }
-  if(worlds.length<AIP.egMinSamples) return null;
+  if(worlds.length<((ov&&ov.minSamples)||AIP.egMinSamples)) return null;
   const out=cands.map(c=>({cards:c.cards,u:0}));
   for(const w of worlds){
     const kitty=view.buriedKnown&&view.buriedKnown.length?view.buriedKnown:w.kitty;
@@ -3750,6 +3781,32 @@ function endgameSearch(view, plays, cands){
   out.forEach(o=>{o.u/=worlds.length;});
   out.samples=worlds.length;
   return out;
+}
+
+/* s2Cross:跨线触发式中盘搜索。DESIGN §7 实测「抢下就跨线」的决策点 +0.33 级当量、
+ * 对照组符号相反 —— 这是基线家族唯一已量化却未修的中盘缺口。收官搜索(≤8 张)之外,
+ * 闲家分落在某条阶梯线的 [−5, +s2CrossNear] 窗口里时,对启发式 top 候选跑小样本 PIMC,
+ * 目标函数仍是 levelUtility(阶梯自动进决策)。 */
+function maybeEg(view, plays, cands){
+  const n=view.hand.length;
+  const maxN=AIP.s2Depth>0?AIP.s2Depth:AIP.egMaxCards;
+  if(n<=maxN) return endgameSearch(view,plays,cands);
+  /* 波段搜索:深度×样本地图上,9-10 张满样本零增益、11-12 张满样本 +2.1 ——
+   * 中盘搜索的价值集中在这一段。n 落进波段时按 s2BandSamples 满样本搜。 */
+  if(AIP.s2BandSamples>0&&n>=AIP.s2BandLo&&n<=AIP.s2BandHi)
+    return endgameSearch(view,plays,cands.slice(0,AIP.s2BandCands),
+                         {maxN:AIP.s2BandHi,nSamp:AIP.s2BandSamples,maxC:AIP.s2BandCands});
+  if(!AIP.s2Cross) return null;
+  if(n>AIP.s2CrossMax||cands.length<2) return null;
+  const rs=roundScore(view);
+  if(rs.live<=0) return null;
+  for(const L of SCORE_LADDER){
+    const gap=L-rs.def;
+    if(gap>=-5&&gap<=AIP.s2CrossNear)
+      return endgameSearch(view,plays,cands,
+        {maxN:AIP.s2CrossMax,nSamp:AIP.s2CrossSamples,minSamples:AIP.s2CrossMin,maxC:AIP.s2CrossCands});
+  }
+  return null;
 }
 
 // 领出决策
@@ -3808,7 +3865,7 @@ function aiChooseLead(view){
   let best=cands[0]||{cards:[view.hand[0]],reason:'兜底',score:0};
   /* v0.7.0:收官交给搜索。只用它**排序**(目标函数是「净升几级」,和分制不同量纲),
    * 而且要比启发式选中的那个高出 egMargin 级才改判 —— 样本噪声区里仍然听启发式的。 */
-  const eg=endgameSearch(view,null,cands.slice(0,AIP.egMaxCands));
+  const eg=maybeEg(view,null,cands.slice(0,AIP.egMaxCands));
   if(eg){
     const cur=eg.find(o=>o.cards===best.cards);
     const top=eg.slice().sort((a,b)=>b.u-a.u)[0];
