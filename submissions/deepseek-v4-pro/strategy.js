@@ -682,7 +682,7 @@ function minWin(track, hand, leadCl, curCl, isLast) {
     /* 结构校验 + 压得过当前最大 */
     const cl = E.classify(pick, trump);
     if (!cl) return null;
-    if (E.structSig(cl.type === 'throw' ? cl.comps : [cl]) !== E.structSig(leadCl.comps)) return null;
+    if (!E.structMatches(cl, leadCl)) return null;
     if (cl.top <= (curCl.suit === 'T' ? curCl.top : -1) && curCl.suit === 'T') return null;
     return pick;
   }
@@ -906,11 +906,10 @@ function discard2(view, cfg) {
 function trickWinnerSoFar(plays, trump) {
   let best = E.classify(plays[0].cards, trump);
   let seat = plays[0].seat;
-  const sig = (cl) => cl.type + ':' + (cl.len || 1);
-  const leadSig = best ? sig(best) : '?';
+  const leadCl0 = E.classify(plays[0].cards, trump);
   for (let i = 1; i < plays.length; i++) {
     const cl = E.classify(plays[i].cards, trump);
-    if (!cl || sig(cl) !== leadSig) continue;
+    if (!cl || !E.structMatches(cl, leadCl0)) continue;
     if (cl.suit === best.suit) { if (cl.top > best.top) { best = cl; seat = plays[i].seat; } }
     else if (cl.suit === 'T') { best = cl; seat = plays[i].seat; }
   }

@@ -184,10 +184,37 @@ function isLegalFollow(hand, lead, chosen, trump){
 
 // ---- 一墩胜负 ----
 function structSig(comps){ return comps.map(c=>c.type+(c.len||'')).sort().join(','); }
+/* 候选这一手够不够格和领出比大小 —— 「结构对得上」的准确含义。
+ *
+ * 口径:候选的组件可以**拆**,不能**并**。拖拉机拆得成对子和单张、对子拆得成两张单;
+ * 反过来两张单并不成一对、两个不相连的对子并不成拖拉机。于是:
+ *   · 一对主 盖得住「两张单」的甩牌 —— 毙掉撒牌最常见的形态就是这个
+ *   · 一副主拖拉机 盖得住「两个不相连的对子」
+ *   · 两张单 盖不住一对、两个不相连的对子 盖不住拖拉机(和以前一样)
+ *
+ * 旧版要求组件构成**逐字相同**(structSig 相等),于是主 ♥8♥8 去毙 ♦Q+♦J 的撒牌时,
+ * 这一手在 resolveTrick 里被整个跳过,撒牌方反而收了这一墩。
+ * 而 checkThrow 那一侧的 canBeatComp 早就认「拖拉机压对子」—— 一副引擎里两套口径。
+ *
+ * 实现:只需要把领出里的**连对段**(对子算 1 段、长度 L 的拖拉机算 L 段)装进候选的
+ * 连对段里,一段装得下几对就是它的容量;单张不用管,装完之后剩的牌必然正好够。
+ * 段数是个位数,直接回溯。 */
 function structMatches(cand, lead){
-  const a=cand.type==='throw'?cand.comps:[cand];
-  const b=lead.type==='throw'?lead.comps:[lead];
-  return structSig(a)===structSig(b);
+  if(cand.cards.length!==lead.cards.length) return false;
+  const runs=x=>(x.type==='throw'?x.comps:[x])
+    .filter(c=>c.type!=='single').map(c=>c.type==='tractor'?c.len:1).sort((a,b)=>b-a);
+  const need=runs(lead), cap=runs(cand);
+  const fit=(i)=>{
+    if(i===need.length) return true;
+    for(let j=0;j<cap.length;j++){
+      if(cap[j]<need[i]) continue;
+      cap[j]-=need[i];
+      if(fit(i+1)) return true;
+      cap[j]+=need[i];
+    }
+    return false;
+  };
+  return fit(0);
 }
 
 function resolveTrick(plays, trump){
@@ -675,6 +702,30 @@ const AIP = {                 // v3 可调参数,全部集中在这里便于调�
   pPartnerPrior: 0.32,
   pPartnerCalc: 0,            // 记牌证据相对先验的采信比例;0 = 完全用先验(实测最优)
   blockWin: 1,                // 1=生成「盖住末家分牌」的吃法候选;0=只用最省的吃法(消融用)
+  /* 跟牌时拆掉一个副花对子的代价(见 pairUnit / futureValue)。**默认 0,还在量。**
+   * `test/cf-pair.js` 2800 副定点反事实:跟牌时 AI 拆了副花对子、改成不拆的最省牌,
+   * 分数 **+1.04 ±0.37**(t=2.8)、级数 +0.05 ±0.02;而**对照组**(没拆对子、同样换成
+   * 最便宜的牌)是 **−2.59 ±0.27**(t=−9.4)—— 两组符号相反,所以这不是「垫牌整体随意」。
+   * 分层把范围收得很紧:开局(≥17 张)**第 1 次** +1.80 ±0.51(t=3.5),
+   * 同样在开局的第 2 次 −0.40、第 3+ 次 −3.06;中盘第 1 次 −0.26。
+   * 也就是说**保住一个对子一局只值一次**,和护底那条教训一模一样 ——
+   * 所以价值只发给 pairUnit 选出的那一对,不是发给每一对。 */
+  pairHold: 0,
+  /* 闸门改成两个**无状态**条件(v0.7.18 第二轮)。
+   * 第一轮拿「手牌张数 ≥17」近似「本局第 1 次」,自对弈只有 +0.13 ±0.08。
+   * 回头拿 cf-pair 记下的无状态特征查:单看「已打几墩」复现不了那道坎
+   * (0~1 墩 +1.95、2~3 墩 −0.01、8+ 墩 +1.54,不单调),单看「手上几对」也不行
+   * (1/2/3/4+ = +0.93 / +0.16 / +2.67 / +1.64)。**两个一起才行**:
+   *   tr≤3 且 np≥3  → **+2.22 ±0.86**(t=2.6,占全部命中点的 21%)
+   *   其余           → +0.73 ±0.41
+   * 而且在这个闸门**内部**,「本局第几次」不再分得开(第 1 次 +1.98 / 第 2 次 +4.02)——
+   * 也就是说那道坎被这两个无状态量吸收掉了,不必上跨手状态。
+   * ⚠️ 闸门是从这批数据里挑出来的,所以验收必须换全新种子,见 CHANGELOG。 */
+  pairHoldMaxTricks: 3,       // 已打过的墩数超过它就不给
+  pairHoldMinPairs: 3,        // 手上副花对子少于它就不给
+  /* 毙牌保留价的权重(见 ruffReserve)。**默认 0 —— 第一步,还在量。**
+   * 毙的代价 = ruffReserveW × max(0, reserve − 本墩台面分)。 */
+  ruffReserveW: 0,
   /* 打级(级牌 5/10/K,那 8 张级牌本身带 40 / 80 分)上单独量出来的两格 */
   trumpPtDebt: 0,             // 主牌里的分牌也记「迟早要出」的负债(level 10 自对弈 −0.56 ±0.26,关)
   ptLevelBonus: 25,           // 分级的亮主加成;砍到 0 / 10 打级自对弈 −0.28 / −0.21 级/场,不动
@@ -1980,6 +2031,14 @@ function futureValue(cards, X){
   // 实测那样会让王对的 Future 膨胀到 60+,收官该兑现的时候也兑现不出来。
   if(bj>=2) v+=AIP.jokerPairHold+(X.isDecl?AIP.jokerPairDecl:0);
   if(sj>=2) v+=(AIP.jokerPairHold+(X.isDecl?AIP.jokerPairDecl:0))*0.7;
+  /* 跟牌时把 pairUnit 那一对拆开的代价(默认 0,见 AIP.pairHold 那段的实测)。
+   * 只在**跟牌**侧生效 —— 领出时牌型由我定,对子不会被迫拆散,那是笔记第 1 条
+   * 「有牌权时领出保型」的另一半;只罚「恰好出了其中一张」,整对打出去不算拆。 */
+  if(AIP.pairHold&&!X.leading&&X.hand&&X.trPlayed!==undefined
+     &&X.trPlayed<=AIP.pairHoldMaxTricks&&sidePairCount(X)>=AIP.pairHoldMinPairs){
+    const pu=pairUnit(X);
+    if(pu&&cards.filter(c=>pu.ids.has(c.id)).length===1) v+=AIP.pairHold;
+  }
   for(const c of cards){
     if(effSuit(c,trump)==='T'){
       // 主牌稀缺:毙牌权本身值钱,拿低主去毙一墩空气是亏的
@@ -2018,6 +2077,12 @@ function futureValue(cards, X){
       // 只在跟牌时成立 —— 领出分牌是主动送分,不该因为「反正迟早要出」被鼓励。
       if(!X.leading) v-=cardPoints(c)*0.30;
     }
+  }
+  /* 毙这一墩的代价 = 放弃「未来最好的那一次毙牌机会」(默认 0,见 ruffReserve)。
+   * 记在 flat 里不乘 phaseK:reserve 自己已经按剩余墩数算过了,再乘一次是重复折现。 */
+  if(AIP.ruffReserveW&&!X.leading&&X.lead&&X.lead.suit!=='T'
+     &&cards.some(c=>effSuit(c,trump)==='T')){
+    flat+=AIP.ruffReserveW*Math.max(0, ruffReserve(X)-(X.ptsTable||0));
   }
   return v*ph+flat;
 }
@@ -2348,6 +2413,8 @@ function followCtx(view, plays){
   const holdRange=makeHoldRange(reads,mem,trump,view.hand.length);
   const X={shareDenom,trump,lead,cur,partnerWinning,isLast,ptsTable,mem,voids,hand:view.hand,
            remainingOpp,partnerRemaining,partnerSeat,oppAfterPartner,oppRuffRisk,curBoss,isDecl,reads,pVoidOf,oppVoidP,
+           // 已打完几墩 —— view.history 里就有,不是新信息(pairHold 的闸门要用)
+           trPlayed:Math.floor((view.history||[]).length/4),
            holdRange,buriedKnown:view.buriedKnown,phase:phaseOf(view.hand.length)};
   // 队友「暂大」不是「稳大」:确定性由记牌算出,不再是拍脑袋的常数
   X.certainty=isLast?1:pSurvive(X,cur.cl,remainingOpp);
@@ -2415,6 +2482,89 @@ function reserveHold(u, X){
   // 两个对手各有一次机会毙掉它;再打一个折,表示「副牌护底还得先拿到倒数第二墩的牌权」
   return Math.pow(1-pv*q,2)*AIP.sideReserveDamp;
 }
+/* 「值得保住的那一对」—— 和 reserveUnit 同一条教训:价值发给**每一个**单元,
+ * 它们就互相锁死,谁也不肯先动。cf-pair 量出来的形状也一样:开局第 1 次拆对
+ * +1.80 ±0.51,第 2 次 −0.40,第 3+ 次 −3.06 —— 一局只值一次。
+ * 所以这里和 reserveUnit 一样只选**一个**:这门在外还剩得最多的那一对
+ * (别人还领得出这门,这一对才有机会成型),同门再按序号高的优先。 */
+// 手上还有几个**副花**对子(主门对子另有 trumpHold 那条线,不算在内)
+function sidePairCount(X){
+  if(X._spc!==undefined) return X._spc;
+  const by={};
+  for(const c of (X.hand||[])){
+    if(effSuit(c,X.trump)==='T') continue;
+    const k=c.suit+'_'+c.rank; by[k]=(by[k]||0)+1;
+  }
+  let n=0; for(const k in by) n+=Math.floor(by[k]/2);
+  return X._spc=n;
+}
+
+function pairUnit(X){
+  if(X._pu!==undefined) return X._pu;
+  const trump=X.trump, by={};
+  for(const c of (X.hand||[])){
+    if(effSuit(c,trump)==='T') continue;
+    const k=c.suit+'_'+c.rank; (by[k]=by[k]||[]).push(c);
+  }
+  let best=null, bestKey=-1;
+  for(const k in by){
+    if(by[k].length<2) continue;
+    const cs=[by[k][0],by[k][1]], su=effSuit(cs[0],trump);
+    let rem=0;
+    if(X.mem&&X.mem.unseen) for(const uk in X.mem.unseen){
+      if(X.mem.unseen[uk]>0&&effSuit(keyToCard(uk),trump)===su) rem+=X.mem.unseen[uk];
+    }
+    const key=rem*100+ordIdx(cs[0],trump);
+    if(key>bestKey){ bestKey=key; best={cards:cs, ids:new Set(cs.map(c=>c.id)), rem}; }
+  }
+  return X._pu=best;
+}
+
+/* 毙牌的**保留价** —— §7 那条「给资源定保留价,而不是给这一墩定价」的第一步。
+ * **默认关**(`ruffReserveW: 0`)。
+ *
+ * 四次失败指向同一件事:按墩生效的规则表达不了「我还需要留几张」
+ * (v0.7.5 毙牌 +1.32/+2.11 → 聚合零;v0.7.15 跨线 +0.33 → 三档全负;
+ *  v0.7.18 对子两轮 +1.04 → +0.13 → −0.05)。所以不再给这一墩定价,改问:
+ *
+ *   reserve(X) = E[未来还剩的毙牌机会里,**最好的那一次**值多少分]
+ *   毙的代价   = max(0, reserve − 本墩台面分)
+ *
+ * 三个输入都从记牌算,不搜索:
+ *   n   还剩几次机会 = min(手上主牌数, 剩余墩数 × 领出落在我断门那几门的概率)
+ *   μ   每次值多少   = 未见副牌的平均分 × 3(另外三家各出一张)
+ *   最好的那一次 ≈ μ × (1 + ln n),n 次抽样极大值的粗近似
+ * 收官护底是这组机会里**最贵的一次**(底分 × 抠底倍数),并进来取大 ——
+ * 如果这条式子成立,endKittyWeight / reserveUnit / reserveMarginal 迟早被它吸收掉。 */
+function ruffReserve(X){
+  if(X._rr!==undefined) return X._rr;
+  const {mem,trump,hand}=X;
+  if(!mem||!mem.unseen||!hand||hand.length<=1) return X._rr=0;
+  const R=hand.length;
+  const nT=hand.filter(c=>effSuit(c,trump)==='T').length;
+  if(nT<=0) return X._rr=0;
+  const mine={};                                   // 我手上还有哪些副门
+  for(const c of hand){ const su=effSuit(c,trump); if(su!=='T') mine[su]=1; }
+  let sideCards=0, sidePts=0, voidUnseen=0, unseenAll=0;
+  for(const k in mem.unseen){
+    const n=mem.unseen[k]; if(n<=0) continue;
+    unseenAll+=n;
+    const c=keyToCard(k), su=effSuit(c,trump);
+    if(su==='T') continue;
+    sideCards+=n; sidePts+=cardPoints(c)*n;
+    if(!mine[su]) voidUnseen+=n;                   // 落在我断门的那几门上
+  }
+  if(sideCards<=0||unseenAll<=0||voidUnseen<=0) return X._rr=0;
+  const n=Math.min(nT, R*(voidUnseen/unseenAll)); // 还剩几次机会
+  const mu=(sidePts/sideCards)*3;                 // 每次机会台面上大约有多少分
+  const best=n>0?mu*(1+Math.log(Math.max(1,n))):0;
+  // 收官护底:这组机会里最贵的一次
+  const hz=endHorizonOf(X);
+  const near=R<=hz?Math.pow(Math.max(0,1-(R-1)/Math.max(1,hz)),AIP.endNearGamma||1):0;
+  const guard=near>0?kittyPts(X)*kittyMultOf(X)*near:0;
+  return X._rr=Math.max(best,guard);
+}
+
 function reserveUnit(X){
   if(X._ru!==undefined) return X._ru;
   const us=bossUnits(X);

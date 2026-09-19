@@ -209,9 +209,24 @@ function isLegalFollow(hand, lead, chosen, trump) {
 
 function structSig(comps) { return comps.map(c => c.type + (c.len || '')).sort().join(','); }
 function structMatches(cand, lead) {
-  const a = cand.type === 'throw' ? cand.comps : [cand];
-  const b = lead.type === 'throw' ? lead.comps : [lead];
-  return structSig(a) === structSig(b);
+  /* v0.7.17 口径:候选的组件可以拆、不能并(一对盖得住两张单,拖拉机盖得住两个对子;
+   * 反过来盖不住)。实现:把领出的连对段装进候选的连对段,段容量独立,回溯。 */
+  if (cand.cards.length !== lead.cards.length) return false;
+  const runs = x => (x.type === 'throw' ? x.comps : [x])
+    .filter(c => c.type !== 'single').map(c => c.type === 'tractor' ? c.len : 1)
+    .sort((x, y) => y - x);
+  const need = runs(lead), cap = runs(cand);
+  const fit = (i) => {
+    if (i === need.length) return true;
+    for (let j = 0; j < cap.length; j++) {
+      if (cap[j] < need[i]) continue;
+      cap[j] -= need[i];
+      if (fit(i + 1)) return true;
+      cap[j] += need[i];
+    }
+    return false;
+  };
+  return fit(0);
 }
 
 function resolveTrick(plays, trump) {
