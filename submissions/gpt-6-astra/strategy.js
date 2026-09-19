@@ -214,14 +214,23 @@ function pairThreatCount(card, view) {
   return threats;
 }
 
-function unknownCardsOfSuit(view, suit) {
-  const knownIds = new Set(view.hand.map((card) => card.id));
-  for (const play of view.history) {
-    for (const card of play.cards) knownIds.add(card.id);
+function unknownCardsByFace(view) {
+  const counts = new Map();
+  for (const card of [...view.hand, ...view.history.flatMap(p => p.cards), ...(view.buriedKnown || [])]) {
+    const key = `${card.suit}:${card.rank}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
   }
-  for (const card of view.buriedKnown || []) knownIds.add(card.id);
-  return E.makeDeck().filter((card) =>
-    E.effSuit(card, view.trump) === suit && !knownIds.has(card.id));
+  const unknown = [];
+  for (const card of E.makeDeck()) {
+    const key = `${card.suit}:${card.rank}`, n = counts.get(key) || 0;
+    if (n) counts.set(key, n - 1);
+    else unknown.push({suit:card.suit, rank:card.rank, id:-1-unknown.length});
+  }
+  return unknown;
+}
+
+function unknownCardsOfSuit(view, suit) {
+  return unknownCardsByFace(view).filter(card => E.effSuit(card, view.trump) === suit);
 }
 
 function componentThreatCount(unknown, comp, trump) {
@@ -1065,12 +1074,11 @@ function chooseHighPointLegalFollow(hand, leadInput, trump, rules = E.DEFAULT_RU
 function partialWinner(plays, trump) {
   const lead = E.classify(plays[0].cards, trump);
   if (!lead) return plays[0].seat;
-  const structure = E.structureKey(lead);
   let best = lead;
   let winner = plays[0].seat;
   for (let i = 1; i < plays.length; i += 1) {
     const candidate = E.classify(plays[i].cards, trump);
-    if (!candidate || E.structureKey(candidate) !== structure) continue;
+    if (!E.structCovers(candidate, lead)) continue;
     if (candidate.suit === best.suit) {
       if (candidate.top > best.top) {
         best = candidate;
@@ -1126,12 +1134,7 @@ function unknownCanBeatCurrent(plays, view, allowThrow = false, allowSingle = fa
       !(allowSingle && winningClass.type === 'single'))) {
     return true;
   }
-  const knownIds = new Set(view.hand.map((card) => card.id));
-  for (const item of view.history) {
-    for (const card of item.cards) knownIds.add(card.id);
-  }
-  for (const card of view.buriedKnown || []) knownIds.add(card.id);
-  const unknown = E.makeDeck().filter((card) => !knownIds.has(card.id));
+  const unknown = unknownCardsByFace(view);
   const components = winningClass.type === 'throw' ? winningClass.comps : [winningClass];
   const sameSuit = unknown.filter((card) =>
     E.effSuit(card, view.trump) === winningClass.suit);
@@ -1177,7 +1180,7 @@ function unknownCanBuildBeatingThrowExact(plays, view) {
     remaining[i] = remaining[i + 1] + groups[i].length;
   }
   const n = winningClass.cards.length;
-  const structure = E.structureKey(winningClass);
+  const leadClass = E.classify(plays[0].cards, view.trump);
   let leaves = 0;
   let found = false;
   function visit(index, selected) {
@@ -1189,7 +1192,7 @@ function unknownCanBuildBeatingThrowExact(plays, view) {
         return;
       }
       const candidate = E.classify(selected, view.trump);
-      if (candidate && E.structureKey(candidate) === structure &&
+      if (E.structCovers(candidate, leadClass) &&
           candidate.top > winningClass.top) found = true;
       return;
     }
@@ -1232,7 +1235,7 @@ function chooseWinningThrowFollow(view, plays, preferPoints = false) {
     if (selected.length === n) {
       leaves += 1;
       const play = E.classify(selected, view.trump);
-      if (!play || E.structureKey(play) !== E.structureKey(lead) ||
+      if (!E.structCovers(play, lead) ||
           !E.isLegalFollow(view.hand, lead, selected, view.trump, E.DEFAULT_RULES) ||
           partialWinner([...plays, { seat: view.seat, cards: selected }], view.trump) !==
             view.seat) return;
