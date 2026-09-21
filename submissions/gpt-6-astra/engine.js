@@ -1,5 +1,8 @@
 'use strict';
 
+// RULES 2026-09-11 §E/S3⑥. Development rollback: change only this literal.
+const STRUCTURE_COVER = true;
+
 const DEFAULT_RULES = Object.freeze({
   levelStart: 2,
   handSize: 25,
@@ -124,15 +127,21 @@ function decompose(cards, trump) {
     run = [];
   }
 
+  // RULES 2026-09-07 S3(3): equal ordinals occupy separate layers.
+  const layers = [], counts = new Map();
   for (const pair of pairs) {
-    if (run.length === 0 || pair.top - run[run.length - 1].top === 1) {
-      run.push(pair);
-    } else {
-      flushRun();
+    const layer = counts.get(pair.top) || 0;
+    counts.set(pair.top, layer + 1);
+    if (!layers[layer]) layers[layer] = [];
+    layers[layer].push(pair);
+  }
+  for (const layer of layers) {
+    for (const pair of layer) {
+      if (run.length && pair.top - run[run.length - 1].top !== 1) flushRun();
       run.push(pair);
     }
+    flushRun();
   }
-  flushRun();
   components.push(...singles);
   components.sort(componentOrder);
   return components;
@@ -256,19 +265,49 @@ function structureKey(play) {
     .join('|');
 }
 
+function structCovers(candidate, lead) {
+  if (!candidate || !lead) return false;
+  if (!STRUCTURE_COVER) return structureKey(candidate) === structureKey(lead);
+  if (candidate.cards.length !== lead.cards.length) return false;
+  const runs = (play) => (play.type === 'throw' ? play.comps : [play])
+    .filter((comp) => comp.type !== 'single')
+    .map((comp) => comp.type === 'tractor' ? comp.len : 1)
+    .sort((a, b) => b - a);
+  const need = runs(lead), capacities = runs(candidate);
+  if (need.reduce((a, b) => a + b, 0) > capacities.reduce((a, b) => a + b, 0)) return false;
+  const failed = new Set();
+  function fit(index) {
+    if (index === need.length) return true;
+    const key = index + ':' + capacities.slice().sort((a, b) => b - a).join(',');
+    if (failed.has(key)) return false;
+    const tried = new Set();
+    for (let j = 0; j < capacities.length; j += 1) {
+      const before = capacities[j];
+      if (before < need[index] || tried.has(before)) continue;
+      tried.add(before);
+      capacities[j] -= need[index];
+      const ok = fit(index + 1);
+      capacities[j] = before;
+      if (ok) return true;
+    }
+    failed.add(key);
+    return false;
+  }
+  return fit(0);
+}
+
 function resolveTrick(plays, trump) {
   if (!Array.isArray(plays) || plays.length !== 4) {
     throw new Error('resolveTrick requires exactly four plays');
   }
   const lead = classify(plays[0].cards, trump);
   if (!lead) throw new Error('lead play is not classifiable');
-  const leadStructure = structureKey(lead);
   let best = lead;
   let winIdx = 0;
 
   for (let i = 1; i < plays.length; i += 1) {
     const candidate = classify(plays[i].cards, trump);
-    if (!candidate || structureKey(candidate) !== leadStructure) continue;
+    if (!structCovers(candidate, lead)) continue;
     if (candidate.suit === best.suit) {
       if (candidate.top > best.top) {
         best = candidate;
@@ -304,18 +343,22 @@ function canBeatComp(sameSuitCards, comp, trump) {
 function checkThrow(hands, seat, cards, trump) {
   const lead = classify(cards, trump);
   if (!lead || lead.type !== 'throw') return { ok: true };
+  const beaten = [];
   for (const comp of lead.comps) {
     for (let player = 0; player < 4; player += 1) {
       if (player === seat) continue;
       const sameSuitCards = hands[player].filter((card) => effSuit(card, trump) === lead.suit);
       if (canBeatComp(sameSuitCards, comp, trump)) {
-        let forced = lead.comps[0];
-        for (let i = 1; i < lead.comps.length; i += 1) {
-          if (lead.comps[i].top < forced.top) forced = lead.comps[i];
-        }
-        return { ok: false, forced, forcedCards: forced.cards.slice() };
+        beaten.push(comp);
+        break;
       }
     }
+  }
+  if (beaten.length) {
+    // RULES 2026-09-08 S3(7): beaten components only, size before top.
+    beaten.sort((a, b) => a.cards.length - b.cards.length || a.top - b.top);
+    const forced = beaten[0];
+    return { ok: false, forced, forcedCards: forced.cards.slice() };
   }
   return { ok: true };
 }
@@ -492,6 +535,7 @@ module.exports = {
   selectionIsFromHand,
   isLegalFollow,
   structureKey,
+  structCovers,
   resolveTrick,
   canBeatComp,
   checkThrow,
