@@ -1,0 +1,2195 @@
+{
+  "entrant": "gpt-6-astra",
+  "replacesEntrant": "gpt-5.6-sol",
+  "baseline": "C02",
+  "generatedAt": "2026-09-19T20:21:36.749Z",
+  "ruleVersion": "20260911",
+  "contestBase": "779361d65278aea79a0a30e2b8b3ace31d434e54",
+  "publicRulesReference": "b2437dd23aeb55c5e7a4008ac0b712d80e8dd6fc",
+  "node": "v24.19.0",
+  "packageHashes": {
+    "index.js": "d6ce2d4dad8703297e36356466e954653583fc4e080d445c00e6d54647a2834d",
+    "engine.js": "70b81c20712e42f00cdd464ff36931e9b2dc373f99b7050c0a84dcff50dbca44",
+    "strategy.js": "022ef9a1c83c213583c73987589fe62c440cbc7f9a0a048343804af48d42bd85",
+    "belief.js": "c84bbce9f403f4ed24338e7d1bc44c0d179eb596aa1e1876ebb03c12d63a924f",
+    "endgame2.js": "970a7ce07d4dd08364a1e56b9a2f490540984de952191270a4d0762e7e399c67"
+  },
+  "standalonePackage": {
+    "passed": true,
+    "dir": "gpt-6-astra",
+    "files": [
+      "index.js",
+      "engine.js",
+      "strategy.js",
+      "endgame2.js",
+      "belief.js"
+    ],
+    "called": [
+      "onDeal",
+      "onRebel",
+      "discard",
+      "lead",
+      "follow"
+    ]
+  },
+  "tests": {
+    "priorS5AndBoundaryCases": 105,
+    "newStructureAndStrategyChecks": 19,
+    "independentStructurePairs": 54116,
+    "decompositionAndClassificationCasesEach": 9918,
+    "throwCases": 2118,
+    "legalFollowSubsets": 15366,
+    "trickResolutionCases": 4803,
+    "endgamePublicRuleDifferentials": 400,
+    "unknownFaceIdentityViews": 500,
+    "unknownFaceSuitComparisons": 2500,
+    "ownSimulatorMatches": 24,
+    "ownSimulatorRounds": 885,
+    "ownSimulatorCalibrationDecisions": 47844
+  },
+  "executedMatches": 320,
+  "executedRounds": 9438,
+  "seedOpponentClusters": 80,
+  "sharedSeedClusters": 20,
+  "final": [
+    {
+      "opponent": "claude",
+      "pairedSeeds": 20,
+      "uniqueSeedSeatMatches": 40,
+      "executedMatches": 80,
+      "executedRounds": 2768,
+      "candidateStats": {
+        "win": {
+          "n": 20,
+          "mean": 0.4,
+          "se": 0.07779866052154992
+        },
+        "level": {
+          "n": 20,
+          "mean": -1.325,
+          "se": 0.9660520580938525
+        },
+        "points": {
+          "n": 20,
+          "mean": -2.560868487674602,
+          "se": 1.3800994410521459
+        }
+      },
+      "calibrationDelta": {
+        "win": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "points": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        }
+      },
+      "calibrationDecisions": 134786,
+      "violations": 0,
+      "internalFallbacks": 0,
+      "cpuSecondsPerMatch": {
+        "n": 40,
+        "mean": 0.8900469000000001,
+        "se": 0.04513134483796242
+      },
+      "maxCpuSecondsPerMatch": 1.581692,
+      "maxCallCpuMs": 115.454,
+      "perSeed": [
+        {
+          "seed": 980001,
+          "win": 0.5,
+          "level": 1.5,
+          "points": 2.359335038363171,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -5,
+              "points": -4.411764705882353,
+              "rounds": 34,
+              "cpuSeconds": 0.951518
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 9.130434782608695,
+              "rounds": 23,
+              "cpuSeconds": 0.68197
+            }
+          ]
+        },
+        {
+          "seed": 980002,
+          "win": 0,
+          "level": -6.5,
+          "points": -8.130952380952381,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -6,
+              "points": -7.333333333333333,
+              "rounds": 30,
+              "cpuSeconds": 0.810013
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -7,
+              "points": -8.928571428571429,
+              "rounds": 28,
+              "cpuSeconds": 0.670692
+            }
+          ]
+        },
+        {
+          "seed": 980003,
+          "win": 0,
+          "level": -7,
+          "points": -6.898648648648649,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -10,
+              "points": -11.5,
+              "rounds": 30,
+              "cpuSeconds": 0.833851
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -4,
+              "points": -2.2972972972972974,
+              "rounds": 37,
+              "cpuSeconds": 1.30063
+            }
+          ]
+        },
+        {
+          "seed": 980004,
+          "win": 0.5,
+          "level": -2,
+          "points": -1.8127076411960132,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 3,
+              "points": 4.767441860465116,
+              "rounds": 43,
+              "cpuSeconds": 1.138686
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -7,
+              "points": -8.392857142857142,
+              "rounds": 28,
+              "cpuSeconds": 0.676397
+            }
+          ]
+        },
+        {
+          "seed": 980005,
+          "win": 0.5,
+          "level": -2,
+          "points": -0.8074162679425836,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -6,
+              "points": -6.842105263157895,
+              "rounds": 38,
+              "cpuSeconds": 1.067052
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 2,
+              "points": 5.2272727272727275,
+              "rounds": 44,
+              "cpuSeconds": 1.339652
+            }
+          ]
+        },
+        {
+          "seed": 980006,
+          "win": 0,
+          "level": -3.5,
+          "points": -6.617647058823529,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -5,
+              "points": -8.235294117647058,
+              "rounds": 34,
+              "cpuSeconds": 0.769782
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -2,
+              "points": -5,
+              "rounds": 28,
+              "cpuSeconds": 0.569183
+            }
+          ]
+        },
+        {
+          "seed": 980007,
+          "win": 0,
+          "level": -7,
+          "points": -12.252747252747252,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -7,
+              "points": -11.428571428571429,
+              "rounds": 35,
+              "cpuSeconds": 0.743237
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -7,
+              "points": -13.076923076923077,
+              "rounds": 26,
+              "cpuSeconds": 0.500007
+            }
+          ]
+        },
+        {
+          "seed": 980008,
+          "win": 0.5,
+          "level": -1,
+          "points": -1.5423976608187133,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 4,
+              "points": -1.1111111111111112,
+              "rounds": 27,
+              "cpuSeconds": 0.595349
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -6,
+              "points": -1.9736842105263157,
+              "rounds": 38,
+              "cpuSeconds": 1.315953
+            }
+          ]
+        },
+        {
+          "seed": 980009,
+          "win": 0.5,
+          "level": -2,
+          "points": -2.6973039215686274,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -5,
+              "points": -6.375,
+              "rounds": 40,
+              "cpuSeconds": 1.098836
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 1,
+              "points": 0.9803921568627451,
+              "rounds": 51,
+              "cpuSeconds": 1.397196
+            }
+          ]
+        },
+        {
+          "seed": 980010,
+          "win": 0.5,
+          "level": 3,
+          "points": 1.0151515151515151,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -4,
+              "points": -7.666666666666667,
+              "rounds": 45,
+              "cpuSeconds": 0.964931
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 9.696969696969697,
+              "rounds": 33,
+              "cpuSeconds": 1.123445
+            }
+          ]
+        },
+        {
+          "seed": 980011,
+          "win": 1,
+          "level": 8,
+          "points": 9.917929292929294,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 8,
+              "points": 8.030303030303031,
+              "rounds": 33,
+              "cpuSeconds": 0.764007
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 11.805555555555555,
+              "rounds": 36,
+              "cpuSeconds": 1.119969
+            }
+          ]
+        },
+        {
+          "seed": 980012,
+          "win": 0.5,
+          "level": -0.5,
+          "points": -1.6278698979591837,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -6,
+              "points": -7.03125,
+              "rounds": 32,
+              "cpuSeconds": 0.918269
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 5,
+              "points": 3.7755102040816326,
+              "rounds": 49,
+              "cpuSeconds": 1.294787
+            }
+          ]
+        },
+        {
+          "seed": 980013,
+          "win": 0.5,
+          "level": -0.5,
+          "points": -5.222222222222222,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -6,
+              "points": -12.777777777777779,
+              "rounds": 27,
+              "cpuSeconds": 0.559473
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 5,
+              "points": 2.3333333333333335,
+              "rounds": 45,
+              "cpuSeconds": 1.147988
+            }
+          ]
+        },
+        {
+          "seed": 980014,
+          "win": 0,
+          "level": -8.5,
+          "points": -14.094827586206897,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -7,
+              "points": -12.5,
+              "rounds": 26,
+              "cpuSeconds": 0.692199
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -10,
+              "points": -15.689655172413794,
+              "rounds": 29,
+              "cpuSeconds": 0.748487
+            }
+          ]
+        },
+        {
+          "seed": 980015,
+          "win": 0.5,
+          "level": -2,
+          "points": -3.7681159420289854,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 13.333333333333334,
+              "rounds": 30,
+              "cpuSeconds": 0.857405
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -13,
+              "points": -20.869565217391305,
+              "rounds": 23,
+              "cpuSeconds": 0.629883
+            }
+          ]
+        },
+        {
+          "seed": 980016,
+          "win": 1,
+          "level": 3,
+          "points": -0.8976986128625473,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 1,
+              "points": -1.0576923076923077,
+              "rounds": 52,
+              "cpuSeconds": 0.968655
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 5,
+              "points": -0.7377049180327869,
+              "rounds": 61,
+              "cpuSeconds": 1.581692
+            }
+          ]
+        },
+        {
+          "seed": 980017,
+          "win": 0,
+          "level": -3,
+          "points": -6.985294117647059,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -1,
+              "points": -3.9705882352941178,
+              "rounds": 34,
+              "cpuSeconds": 1.056542
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -5,
+              "points": -10,
+              "rounds": 27,
+              "cpuSeconds": 0.562058
+            }
+          ]
+        },
+        {
+          "seed": 980018,
+          "win": 0.5,
+          "level": 1.5,
+          "points": 9.609375,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -10,
+              "points": -8.59375,
+              "rounds": 32,
+              "cpuSeconds": 0.788396
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 27.8125,
+              "rounds": 16,
+              "cpuSeconds": 0.371694
+            }
+          ]
+        },
+        {
+          "seed": 980019,
+          "win": 0,
+          "level": -4,
+          "points": -5.058183183183183,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -4,
+              "points": -5.8108108108108105,
+              "rounds": 37,
+              "cpuSeconds": 0.59895
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -4,
+              "points": -4.305555555555555,
+              "rounds": 36,
+              "cpuSeconds": 0.827052
+            }
+          ]
+        },
+        {
+          "seed": 980020,
+          "win": 1,
+          "level": 6,
+          "points": 4.294871794871795,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 6,
+              "points": 3.58974358974359,
+              "rounds": 39,
+              "cpuSeconds": 1.001359
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 6,
+              "points": 5,
+              "rounds": 28,
+              "cpuSeconds": 0.564631
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "opponent": "kimi",
+      "pairedSeeds": 20,
+      "uniqueSeedSeatMatches": 40,
+      "executedMatches": 80,
+      "executedRounds": 2548,
+      "candidateStats": {
+        "win": {
+          "n": 20,
+          "mean": 0.8,
+          "se": 0.05619514869490165
+        },
+        "level": {
+          "n": 20,
+          "mean": 4.7,
+          "se": 0.7472757540771539
+        },
+        "points": {
+          "n": 20,
+          "mean": 8.819908797661201,
+          "se": 1.2803712013790816
+        }
+      },
+      "calibrationDelta": {
+        "win": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "points": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        }
+      },
+      "calibrationDecisions": 124140,
+      "violations": 0,
+      "internalFallbacks": 0,
+      "cpuSecondsPerMatch": {
+        "n": 40,
+        "mean": 1.188679725,
+        "se": 0.0531229106570499
+      },
+      "maxCpuSecondsPerMatch": 2.007105,
+      "maxCallCpuMs": 136.129,
+      "perSeed": [
+        {
+          "seed": 980001,
+          "win": 0.5,
+          "level": 3.5,
+          "points": 8.067434210526315,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 19.6875,
+              "rounds": 16,
+              "cpuSeconds": 0.860383
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -2,
+              "points": -3.5526315789473686,
+              "rounds": 38,
+              "cpuSeconds": 1.752852
+            }
+          ]
+        },
+        {
+          "seed": 980002,
+          "win": 0.5,
+          "level": 5.5,
+          "points": 14.302631578947368,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 12,
+              "points": 27.105263157894736,
+              "rounds": 19,
+              "cpuSeconds": 0.557892
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -1,
+              "points": 1.5,
+              "rounds": 40,
+              "cpuSeconds": 1.53209
+            }
+          ]
+        },
+        {
+          "seed": 980003,
+          "win": 1,
+          "level": 8,
+          "points": 17.05513784461153,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 3,
+              "points": 8.157894736842104,
+              "rounds": 38,
+              "cpuSeconds": 1.476343
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 25.952380952380953,
+              "rounds": 21,
+              "cpuSeconds": 0.925766
+            }
+          ]
+        },
+        {
+          "seed": 980004,
+          "win": 1,
+          "level": 10,
+          "points": 19.26923076923077,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 16.53846153846154,
+              "rounds": 26,
+              "cpuSeconds": 0.956379
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 22,
+              "rounds": 20,
+              "cpuSeconds": 0.588268
+            }
+          ]
+        },
+        {
+          "seed": 980005,
+          "win": 1,
+          "level": 5.5,
+          "points": 4.253472222222222,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 2,
+              "points": -0.9375,
+              "rounds": 48,
+              "cpuSeconds": 1.657037
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 9.444444444444445,
+              "rounds": 45,
+              "cpuSeconds": 2.007105
+            }
+          ]
+        },
+        {
+          "seed": 980006,
+          "win": 0.5,
+          "level": 2,
+          "points": 2.9826254826254823,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 7,
+              "points": 7.857142857142857,
+              "rounds": 28,
+              "cpuSeconds": 1.148881
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -3,
+              "points": -1.8918918918918919,
+              "rounds": 37,
+              "cpuSeconds": 1.449935
+            }
+          ]
+        },
+        {
+          "seed": 980007,
+          "win": 1,
+          "level": 7.5,
+          "points": 10.865384615384615,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 2,
+              "points": 4.230769230769231,
+              "rounds": 39,
+              "cpuSeconds": 1.515636
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 17.5,
+              "rounds": 24,
+              "cpuSeconds": 0.994761
+            }
+          ]
+        },
+        {
+          "seed": 980008,
+          "win": 1,
+          "level": 8.5,
+          "points": 16.58319185059423,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 5,
+              "points": 7.903225806451613,
+              "rounds": 31,
+              "cpuSeconds": 1.140031
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 25.263157894736842,
+              "rounds": 19,
+              "cpuSeconds": 0.637516
+            }
+          ]
+        },
+        {
+          "seed": 980009,
+          "win": 0.5,
+          "level": 4.5,
+          "points": 4.875,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -1,
+              "points": 0.25,
+              "rounds": 40,
+              "cpuSeconds": 1.025984
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 9.5,
+              "rounds": 30,
+              "cpuSeconds": 1.126731
+            }
+          ]
+        },
+        {
+          "seed": 980010,
+          "win": 0.5,
+          "level": 2.5,
+          "points": 6.034044715447155,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 7,
+              "points": 11.458333333333334,
+              "rounds": 24,
+              "cpuSeconds": 0.865819
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -2,
+              "points": 0.6097560975609756,
+              "rounds": 41,
+              "cpuSeconds": 1.434325
+            }
+          ]
+        },
+        {
+          "seed": 980011,
+          "win": 0.5,
+          "level": -2.5,
+          "points": -0.3926282051282053,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 2,
+              "points": 8.58974358974359,
+              "rounds": 39,
+              "cpuSeconds": 1.333808
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -7,
+              "points": -9.375,
+              "rounds": 32,
+              "cpuSeconds": 1.021426
+            }
+          ]
+        },
+        {
+          "seed": 980012,
+          "win": 1,
+          "level": 6,
+          "points": 11.905555555555555,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 7,
+              "points": 16.11111111111111,
+              "rounds": 27,
+              "cpuSeconds": 1.096222
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 5,
+              "points": 7.7,
+              "rounds": 50,
+              "cpuSeconds": 1.492334
+            }
+          ]
+        },
+        {
+          "seed": 980013,
+          "win": 1,
+          "level": 8.5,
+          "points": 15.90909090909091,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 20.90909090909091,
+              "rounds": 22,
+              "cpuSeconds": 1.204383
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 7,
+              "points": 10.909090909090908,
+              "rounds": 44,
+              "cpuSeconds": 1.504674
+            }
+          ]
+        },
+        {
+          "seed": 980014,
+          "win": 0.5,
+          "level": 0,
+          "points": 1.5488215488215484,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 12.727272727272727,
+              "rounds": 22,
+              "cpuSeconds": 0.803614
+            },
+            {
+              "team": 1,
+              "win": 0,
+              "level": -9,
+              "points": -9.62962962962963,
+              "rounds": 27,
+              "cpuSeconds": 0.801344
+            }
+          ]
+        },
+        {
+          "seed": 980015,
+          "win": 1,
+          "level": 6,
+          "points": 8.393246187363834,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 2,
+              "points": -1.1764705882352942,
+              "rounds": 34,
+              "cpuSeconds": 1.235168
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 17.962962962962962,
+              "rounds": 27,
+              "cpuSeconds": 0.957753
+            }
+          ]
+        },
+        {
+          "seed": 980016,
+          "win": 1,
+          "level": 8.5,
+          "points": 12.730911330049262,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 17.06896551724138,
+              "rounds": 29,
+              "cpuSeconds": 1.497696
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 8.392857142857142,
+              "rounds": 28,
+              "cpuSeconds": 1.339747
+            }
+          ]
+        },
+        {
+          "seed": 980017,
+          "win": 1,
+          "level": 5,
+          "points": 8.24718045112782,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 3,
+              "points": 6.315789473684211,
+              "rounds": 38,
+              "cpuSeconds": 1.440002
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 7,
+              "points": 10.178571428571429,
+              "rounds": 28,
+              "cpuSeconds": 0.980994
+            }
+          ]
+        },
+        {
+          "seed": 980018,
+          "win": 1,
+          "level": 2.5,
+          "points": 6.50709219858156,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 3,
+              "points": 3.3333333333333335,
+              "rounds": 27,
+              "cpuSeconds": 1.031237
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 2,
+              "points": 9.680851063829786,
+              "rounds": 47,
+              "cpuSeconds": 1.662553
+            }
+          ]
+        },
+        {
+          "seed": 980019,
+          "win": 0.5,
+          "level": 0.5,
+          "points": 3.8333333333333335,
+          "legs": [
+            {
+              "team": 0,
+              "win": 0,
+              "level": -2,
+              "points": 2.875,
+              "rounds": 40,
+              "cpuSeconds": 1.362759
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 3,
+              "points": 4.791666666666667,
+              "rounds": 24,
+              "cpuSeconds": 1.162478
+            }
+          ]
+        },
+        {
+          "seed": 980020,
+          "win": 1,
+          "level": 2,
+          "points": 3.4274193548387095,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 1,
+              "points": -0.6451612903225806,
+              "rounds": 31,
+              "cpuSeconds": 1.201799
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 3,
+              "points": 7.5,
+              "rounds": 34,
+              "cpuSeconds": 0.763464
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "opponent": "glm",
+      "pairedSeeds": 20,
+      "uniqueSeedSeatMatches": 40,
+      "executedMatches": 80,
+      "executedRounds": 2348,
+      "candidateStats": {
+        "win": {
+          "n": 20,
+          "mean": 1,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 9.65,
+          "se": 0.4024595435699423
+        },
+        "points": {
+          "n": 20,
+          "mean": 18.057173376792253,
+          "se": 1.577687243764024
+        }
+      },
+      "calibrationDelta": {
+        "win": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "points": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        }
+      },
+      "calibrationDecisions": 116572,
+      "violations": 0,
+      "internalFallbacks": 0,
+      "cpuSecondsPerMatch": {
+        "n": 40,
+        "mean": 0.791634275,
+        "se": 0.04799068823400078
+      },
+      "maxCpuSecondsPerMatch": 1.690872,
+      "maxCallCpuMs": 110.805,
+      "perSeed": [
+        {
+          "seed": 980001,
+          "win": 1,
+          "level": 9,
+          "points": 18.983870967741936,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 7,
+              "points": 10.96774193548387,
+              "rounds": 31,
+              "cpuSeconds": 0.781574
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 27,
+              "rounds": 20,
+              "cpuSeconds": 0.524505
+            }
+          ]
+        },
+        {
+          "seed": 980002,
+          "win": 1,
+          "level": 6,
+          "points": 12.85180817610063,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 8,
+              "points": 16.458333333333332,
+              "rounds": 24,
+              "cpuSeconds": 0.707243
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 4,
+              "points": 9.245283018867925,
+              "rounds": 53,
+              "cpuSeconds": 1.690872
+            }
+          ]
+        },
+        {
+          "seed": 980003,
+          "win": 1,
+          "level": 12,
+          "points": 22.1875,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 12,
+              "points": 22.5,
+              "rounds": 20,
+              "cpuSeconds": 0.521106
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 21.875,
+              "rounds": 24,
+              "cpuSeconds": 0.706086
+            }
+          ]
+        },
+        {
+          "seed": 980004,
+          "win": 1,
+          "level": 11,
+          "points": 28.0720823798627,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 26.57894736842105,
+              "rounds": 19,
+              "cpuSeconds": 0.680639
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 29.565217391304348,
+              "rounds": 23,
+              "cpuSeconds": 0.585893
+            }
+          ]
+        },
+        {
+          "seed": 980005,
+          "win": 1,
+          "level": 8,
+          "points": 14.186363636363637,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 4,
+              "points": 6.1,
+              "rounds": 50,
+              "cpuSeconds": 1.589526
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 22.272727272727273,
+              "rounds": 22,
+              "cpuSeconds": 0.566735
+            }
+          ]
+        },
+        {
+          "seed": 980006,
+          "win": 1,
+          "level": 10,
+          "points": 22.15909090909091,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 22.272727272727273,
+              "rounds": 22,
+              "cpuSeconds": 0.681658
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 22.045454545454547,
+              "rounds": 22,
+              "cpuSeconds": 0.670773
+            }
+          ]
+        },
+        {
+          "seed": 980007,
+          "win": 1,
+          "level": 8,
+          "points": 10.95711759504863,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 8,
+              "points": 7.948717948717949,
+              "rounds": 39,
+              "cpuSeconds": 0.919111
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 13.96551724137931,
+              "rounds": 29,
+              "cpuSeconds": 0.666124
+            }
+          ]
+        },
+        {
+          "seed": 980008,
+          "win": 1,
+          "level": 11.5,
+          "points": 21.602254428341382,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 19.074074074074073,
+              "rounds": 27,
+              "cpuSeconds": 0.829619
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 24.130434782608695,
+              "rounds": 23,
+              "cpuSeconds": 0.602088
+            }
+          ]
+        },
+        {
+          "seed": 980009,
+          "win": 1,
+          "level": 11.5,
+          "points": 29.589160839160837,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 13.409090909090908,
+              "rounds": 22,
+              "cpuSeconds": 0.529546
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 45.76923076923077,
+              "rounds": 13,
+              "cpuSeconds": 0.274822
+            }
+          ]
+        },
+        {
+          "seed": 980010,
+          "win": 1,
+          "level": 9.5,
+          "points": 11.926356589147286,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 14.186046511627907,
+              "rounds": 43,
+              "cpuSeconds": 1.069263
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 9.666666666666666,
+              "rounds": 45,
+              "cpuSeconds": 1.446922
+            }
+          ]
+        },
+        {
+          "seed": 980011,
+          "win": 1,
+          "level": 7,
+          "points": 9.989316239316238,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 6,
+              "points": 9.423076923076923,
+              "rounds": 26,
+              "cpuSeconds": 0.506082
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 10.555555555555555,
+              "rounds": 27,
+              "cpuSeconds": 0.705649
+            }
+          ]
+        },
+        {
+          "seed": 980012,
+          "win": 1,
+          "level": 9,
+          "points": 18.53448275862069,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 20,
+              "rounds": 25,
+              "cpuSeconds": 0.723274
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 17.06896551724138,
+              "rounds": 29,
+              "cpuSeconds": 0.86835
+            }
+          ]
+        },
+        {
+          "seed": 980013,
+          "win": 1,
+          "level": 10.5,
+          "points": 17.463541666666664,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 16.333333333333332,
+              "rounds": 30,
+              "cpuSeconds": 0.601748
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 18.59375,
+              "rounds": 32,
+              "cpuSeconds": 0.914154
+            }
+          ]
+        },
+        {
+          "seed": 980014,
+          "win": 1,
+          "level": 10.5,
+          "points": 13.46894409937888,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 12,
+              "points": 16.285714285714285,
+              "rounds": 35,
+              "cpuSeconds": 0.985249
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 10.652173913043478,
+              "rounds": 46,
+              "cpuSeconds": 1.030618
+            }
+          ]
+        },
+        {
+          "seed": 980015,
+          "win": 1,
+          "level": 9.5,
+          "points": 18.020361990950228,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 19.423076923076923,
+              "rounds": 26,
+              "cpuSeconds": 0.874098
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 16.61764705882353,
+              "rounds": 34,
+              "cpuSeconds": 0.844078
+            }
+          ]
+        },
+        {
+          "seed": 980016,
+          "win": 1,
+          "level": 9,
+          "points": 13.059090909090909,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 16.8,
+              "rounds": 25,
+              "cpuSeconds": 0.843364
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 7,
+              "points": 9.318181818181818,
+              "rounds": 44,
+              "cpuSeconds": 1.25311
+            }
+          ]
+        },
+        {
+          "seed": 980017,
+          "win": 1,
+          "level": 8,
+          "points": 9.129291251384274,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 8,
+              "points": 10.119047619047619,
+              "rounds": 42,
+              "cpuSeconds": 1.006071
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 8.13953488372093,
+              "rounds": 43,
+              "cpuSeconds": 0.946281
+            }
+          ]
+        },
+        {
+          "seed": 980018,
+          "win": 1,
+          "level": 13.5,
+          "points": 36.25,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 14,
+              "points": 36.25,
+              "rounds": 16,
+              "cpuSeconds": 0.447758
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 36.25,
+              "rounds": 16,
+              "cpuSeconds": 0.377087
+            }
+          ]
+        },
+        {
+          "seed": 980019,
+          "win": 1,
+          "level": 9,
+          "points": 14.484572230014024,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 19.130434782608695,
+              "rounds": 23,
+              "cpuSeconds": 0.768977
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 9.838709677419354,
+              "rounds": 31,
+              "cpuSeconds": 0.722879
+            }
+          ]
+        },
+        {
+          "seed": 980020,
+          "win": 1,
+          "level": 10.5,
+          "points": 18.22826086956522,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 19.5,
+              "rounds": 30,
+              "cpuSeconds": 0.73692
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 16.956521739130434,
+              "rounds": 23,
+              "cpuSeconds": 0.465519
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "opponent": "deepseek",
+      "pairedSeeds": 20,
+      "uniqueSeedSeatMatches": 40,
+      "executedMatches": 80,
+      "executedRounds": 1774,
+      "candidateStats": {
+        "win": {
+          "n": 20,
+          "mean": 1,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 10.8,
+          "se": 0.28191077349141214
+        },
+        "points": {
+          "n": 20,
+          "mean": 26.88961502189436,
+          "se": 1.2100293101700252
+        }
+      },
+      "calibrationDelta": {
+        "win": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "level": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        },
+        "points": {
+          "n": 20,
+          "mean": 0,
+          "se": 0
+        }
+      },
+      "calibrationDecisions": 90780,
+      "violations": 0,
+      "internalFallbacks": 0,
+      "cpuSecondsPerMatch": {
+        "n": 40,
+        "mean": 0.849887075,
+        "se": 0.03670356629551782
+      },
+      "maxCpuSecondsPerMatch": 1.419571,
+      "maxCallCpuMs": 142.38,
+      "perSeed": [
+        {
+          "seed": 980001,
+          "win": 1,
+          "level": 12,
+          "points": 32.76315789473684,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 13,
+              "points": 40,
+              "rounds": 12,
+              "cpuSeconds": 0.444125
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 25.526315789473685,
+              "rounds": 19,
+              "cpuSeconds": 0.73554
+            }
+          ]
+        },
+        {
+          "seed": 980002,
+          "win": 1,
+          "level": 12,
+          "points": 29.91025641025641,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 14,
+              "points": 38.666666666666664,
+              "rounds": 15,
+              "cpuSeconds": 0.542798
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 21.153846153846153,
+              "rounds": 26,
+              "cpuSeconds": 0.990591
+            }
+          ]
+        },
+        {
+          "seed": 980003,
+          "win": 1,
+          "level": 10,
+          "points": 22.161538461538463,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 26.923076923076923,
+              "rounds": 26,
+              "cpuSeconds": 1.371122
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 17.4,
+              "rounds": 25,
+              "cpuSeconds": 0.967168
+            }
+          ]
+        },
+        {
+          "seed": 980004,
+          "win": 1,
+          "level": 9.5,
+          "points": 24.403409090909093,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 8,
+              "points": 28.125,
+              "rounds": 24,
+              "cpuSeconds": 0.813181
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 20.681818181818183,
+              "rounds": 22,
+              "cpuSeconds": 0.956581
+            }
+          ]
+        },
+        {
+          "seed": 980005,
+          "win": 1,
+          "level": 8.5,
+          "points": 19.074074074074073,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 7,
+              "points": 19.074074074074073,
+              "rounds": 27,
+              "cpuSeconds": 0.75255
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 19.074074074074073,
+              "rounds": 27,
+              "cpuSeconds": 1.419571
+            }
+          ]
+        },
+        {
+          "seed": 980006,
+          "win": 1,
+          "level": 13,
+          "points": 31.083333333333336,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 13,
+              "points": 31.666666666666668,
+              "rounds": 21,
+              "cpuSeconds": 0.966731
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 30.5,
+              "rounds": 20,
+              "cpuSeconds": 0.922405
+            }
+          ]
+        },
+        {
+          "seed": 980007,
+          "win": 1,
+          "level": 8.5,
+          "points": 23.636363636363637,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 30,
+              "rounds": 23,
+              "cpuSeconds": 0.884158
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 6,
+              "points": 17.272727272727273,
+              "rounds": 33,
+              "cpuSeconds": 1.061374
+            }
+          ]
+        },
+        {
+          "seed": 980008,
+          "win": 1,
+          "level": 10.5,
+          "points": 29.14565826330532,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 33.529411764705884,
+              "rounds": 17,
+              "cpuSeconds": 0.69941
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 24.761904761904763,
+              "rounds": 21,
+              "cpuSeconds": 0.803514
+            }
+          ]
+        },
+        {
+          "seed": 980009,
+          "win": 1,
+          "level": 11,
+          "points": 26.919540229885058,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 15.172413793103448,
+              "rounds": 29,
+              "cpuSeconds": 1.079551
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 38.666666666666664,
+              "rounds": 15,
+              "cpuSeconds": 0.590966
+            }
+          ]
+        },
+        {
+          "seed": 980010,
+          "win": 1,
+          "level": 13,
+          "points": 30.951704545454547,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 14,
+              "points": 34.09090909090909,
+              "rounds": 22,
+              "cpuSeconds": 0.792935
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 12,
+              "points": 27.8125,
+              "rounds": 16,
+              "cpuSeconds": 0.60727
+            }
+          ]
+        },
+        {
+          "seed": 980011,
+          "win": 1,
+          "level": 11.5,
+          "points": 29.004576659038904,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 21.956521739130434,
+              "rounds": 23,
+              "cpuSeconds": 1.000094
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 36.05263157894737,
+              "rounds": 19,
+              "cpuSeconds": 0.710789
+            }
+          ]
+        },
+        {
+          "seed": 980012,
+          "win": 1,
+          "level": 10.5,
+          "points": 20.3125,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 22.083333333333332,
+              "rounds": 24,
+              "cpuSeconds": 0.913916
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 18.541666666666668,
+              "rounds": 24,
+              "cpuSeconds": 0.792332
+            }
+          ]
+        },
+        {
+          "seed": 980013,
+          "win": 1,
+          "level": 11.5,
+          "points": 36.86231884057971,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 27.391304347826086,
+              "rounds": 23,
+              "cpuSeconds": 0.773951
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 46.333333333333336,
+              "rounds": 15,
+              "cpuSeconds": 0.462039
+            }
+          ]
+        },
+        {
+          "seed": 980014,
+          "win": 1,
+          "level": 11,
+          "points": 25.265217391304347,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 13,
+              "points": 31.4,
+              "rounds": 25,
+              "cpuSeconds": 0.806917
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 19.130434782608695,
+              "rounds": 23,
+              "cpuSeconds": 0.780501
+            }
+          ]
+        },
+        {
+          "seed": 980015,
+          "win": 1,
+          "level": 10,
+          "points": 21.96759259259259,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 9,
+              "points": 15.185185185185185,
+              "rounds": 27,
+              "cpuSeconds": 1.158264
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 28.75,
+              "rounds": 24,
+              "cpuSeconds": 0.949102
+            }
+          ]
+        },
+        {
+          "seed": 980016,
+          "win": 1,
+          "level": 10.5,
+          "points": 25.886363636363637,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 10,
+              "points": 19.5,
+              "rounds": 30,
+              "cpuSeconds": 1.207872
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 11,
+              "points": 32.27272727272727,
+              "rounds": 22,
+              "cpuSeconds": 0.791198
+            }
+          ]
+        },
+        {
+          "seed": 980017,
+          "win": 1,
+          "level": 11,
+          "points": 27.767857142857142,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 12,
+              "points": 38.57142857142857,
+              "rounds": 14,
+              "cpuSeconds": 0.553396
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 10,
+              "points": 16.964285714285715,
+              "rounds": 28,
+              "cpuSeconds": 1.103756
+            }
+          ]
+        },
+        {
+          "seed": 980018,
+          "win": 1,
+          "level": 12,
+          "points": 37.84375,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 39.75,
+              "rounds": 20,
+              "cpuSeconds": 0.761167
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 13,
+              "points": 35.9375,
+              "rounds": 16,
+              "cpuSeconds": 0.416646
+            }
+          ]
+        },
+        {
+          "seed": 980019,
+          "win": 1,
+          "level": 10,
+          "points": 18.445833333333333,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 11,
+              "points": 14.6,
+              "rounds": 25,
+              "cpuSeconds": 1.13927
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 9,
+              "points": 22.291666666666668,
+              "rounds": 24,
+              "cpuSeconds": 0.765244
+            }
+          ]
+        },
+        {
+          "seed": 980020,
+          "win": 1,
+          "level": 10,
+          "points": 24.387254901960784,
+          "legs": [
+            {
+              "team": 0,
+              "win": 1,
+              "level": 12,
+              "points": 37.94117647058823,
+              "rounds": 17,
+              "cpuSeconds": 0.750581
+            },
+            {
+              "team": 1,
+              "win": 1,
+              "level": 8,
+              "points": 10.833333333333334,
+              "rounds": 24,
+              "cpuSeconds": 0.756907
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Each opponent has 20 seed clusters after averaging swapped-team legs. Baseline replay duplicates the same policy games for calibration; 320 executions are only 160 unique seed/seat/opponent games.",
+    "All opponents are frozen first-season code. This is not a prediction of season-two standings or a claim of champion strength.",
+    "CPU is measured with process.cpuUsage after warmup on this machine/Node version; official hardware may differ.",
+    "Account usage percentages are shared quota, not a reliable absolute task token count. Resource observations and failed experiments remain in PROGRESS.md.",
+    "Rule alignment uses current main documentation; no separate organizer canonical-freeze notification was received."
+  ]
+}
