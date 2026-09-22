@@ -2,16 +2,21 @@
 
 2026-09-06 跑完的正赛,**9000 场 / 258722 局,一墩不漏**。
 
-五份提交的代码在 [`../submissions/`](../submissions/),这里是它们打出来的每一张牌。
+五份提交的代码在下表里,**每个链接都钉在这一季跑完时的那个 commit 上**;这里是它们打出来的每一张牌。
+
+> 为什么钉 commit 而不是指 [`../submissions/`](../submissions/):那个目录是**活的**。
+> 第二赛季的提交就地覆盖了自己上一季的代码 —— `zai-glm` 和 `deepseek-v4-pro` 已经是
+> 第二赛季的版本,`gpt-5.6-sol` 的目录更是被 `gpt-6-astra` 改名吃掉、已经不存在了。
+> 照目录指过去,读者看到的就不是打出这一季这些牌的那份代码。钉死的链接不会漂。
 
 | 名次 | 选手 | 胜-负 | 胜率 | 净胜级/场 | 每局净分 | 违规 |
 |---:|---|---|---:|---|---:|---:|
 | 1 | 陪练(我们安插的) | 2833-167 | 94.4% | +8.54 ±0.09 | +18.01 | **0** |
-| 2 | [claude-opus-5](../submissions/claude-opus-5) | 2069-931 | 69.0% | +3.46 ±0.17 | +6.94 | **0** |
-| 3 | [gpt-5.6-sol](../submissions/gpt-5.6-sol) | 1864-1136 | 62.1% | +2.79 ±0.19 | +5.83 | **0** |
-| 4 | [kimi-k3](../submissions/kimi-k3) | 1569-1431 | 52.3% | +0.61 ±0.20 | +1.40 | **0** |
-| 5 | [zai-glm](../submissions/zai-glm) | 380-2620 | 12.7% | −7.54 ±0.14 | −13.29 | **0** |
-| 6 | [deepseek-v4-pro](../submissions/deepseek-v4-pro) | 285-2715 | 9.5% | −7.86 ±0.12 | −18.89 | **0** |
+| 2 | [claude-opus-5](https://github.com/ChannonTian/80fen-contest/tree/3c12e763296f29b6a0f3691e1fe2edb31cac02e5/submissions/claude-opus-5) | 2069-931 | 69.0% | +3.46 ±0.17 | +6.94 | **0** |
+| 3 | [gpt-5.6-sol](https://github.com/ChannonTian/80fen-contest/tree/a591ce52dcb493cbacd06ce086abd1ba657f992d/submissions/gpt-5.6-sol) | 1864-1136 | 62.1% | +2.79 ±0.19 | +5.83 | **0** |
+| 4 | [kimi-k3](https://github.com/ChannonTian/80fen-contest/tree/af657f5157168b89b2744378728acad30d2b3090/submissions/kimi-k3) | 1569-1431 | 52.3% | +0.61 ±0.20 | +1.40 | **0** |
+| 5 | [zai-glm](https://github.com/ChannonTian/80fen-contest/tree/6de071ddffc632f4718e395b5d2b846b5e5741c3/submissions/zai-glm) | 380-2620 | 12.7% | −7.54 ±0.14 | −13.29 | **0** |
+| 6 | [deepseek-v4-pro](https://github.com/ChannonTian/80fen-contest/tree/b0c640754b95cbc1588fa69a198600ad84e5659d/submissions/deepseek-v4-pro) | 285-2715 | 9.5% | −7.86 ±0.12 | −18.89 | **0** |
 
 赛制:两两对过局,15 对 × 300 副牌 × 交换阵营 = 每对 600 场。一场是一整轮打级,
 2 → A,过 `2/5/10/13` 四道关。裁判引擎是主办方的线上正式版 **v0.7.12**
@@ -26,8 +31,8 @@
 | | |
 |---|---|
 | [`plays/`](plays/) | **逐墩记录** —— 15 个文件,一对一个。每一局的发牌、底牌、扣牌、每一墩谁出了哪几张、谁赢 |
-| [`replay.js`](replay.js) | 牌谱阅读器,零依赖,把一局渲染成人看得懂的样子 |
-| [`FORMAT.md`](FORMAT.md) | 记录格式 —— 字段、牌 id 编码、怎么还原手牌 |
+| [`../replay.js`](../replay.js) | 牌谱阅读器,零依赖,把一局渲染成人看得懂的样子(两季共用) |
+| [`../FORMAT.md`](../FORMAT.md) | 记录格式 —— 字段、牌 id 编码、怎么还原手牌(两季共用) |
 | [`standings.md`](standings.md) | 赛报:积分榜、对战表、逐对配对统计、打法画像、用时 |
 | [`league.json`](league.json) | 积分榜 + 每一对的配对样本(一个种子一个数,自己做统计用) |
 | [`reviews/`](reviews/) | 六份逐选手复盘:分差丢在哪一侧、关卡局、底、亮主、丢分最多的十局 |
@@ -39,13 +44,13 @@
 
 ```sh
 # 这一对打了多少场、几比几
-node season1/replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz
+node replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz
 
 # 第 7 副牌的两场(交换阵营),摊开四家手牌
-node season1/replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands
+node replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands
 
 # 只看其中一场的第 3 局
-node season1/replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz 7 --side=0 --round=3
+node replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz 7 --side=0 --round=3
 ```
 
 自己解就更自由:
@@ -59,7 +64,7 @@ zcat season1/plays/gpt-5.6-sol__kimi-k3.ndjson.gz \
   | jq -c '.rounds[] | select(.defendersWin) | {seed:.seed, no, total}' | sort -t: -k3 -rn | head
 ```
 
-格式见 [`FORMAT.md`](FORMAT.md)。
+格式见 [`../FORMAT.md`](../FORMAT.md)。
 
 ## 这份档案怎么来的
 

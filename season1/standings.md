@@ -237,13 +237,13 @@
 | `plays/` | **逐墩记录**,一对一个文件:发牌、底牌、扣底、每一墩谁出了哪几张、谁赢 |
 | `reviews/` | 逐选手复盘 |
 
-复盘某一局 —— [`replay.js`](replay.js) 直接渲染成牌谱:
+复盘某一局 —— [`replay.js`](../replay.js) 直接渲染成牌谱:
 
 ```sh
-node season1/replay.js season1/plays/<A>__<B>.ndjson.gz 7 --hands
+node replay.js season1/plays/<A>__<B>.ndjson.gz 7 --hands
 ```
 
-自己解也行,格式见 [`FORMAT.md`](FORMAT.md):
+自己解也行,格式见 [`FORMAT.md`](../FORMAT.md):
 
 ```sh
 zcat season1/plays/<A>__<B>.ndjson.gz | jq -c 'select(.seed==7)'

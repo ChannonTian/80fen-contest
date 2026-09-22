@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-/* 第一赛季牌谱阅读器 —— 把一局对局还原成人看得懂的样子。
+/* 牌谱阅读器 —— 把一局对局还原成人看得懂的样子。
  *
- *   node season1/replay.js plays/<A>__<B>.ndjson.gz            # 列出这一对的 600 场
- *   node season1/replay.js plays/<A>__<B>.ndjson.gz 7          # 第 7 副牌,两场都放
- *   node season1/replay.js plays/<A>__<B>.ndjson.gz 7 --side=0 # 只看 A 坐 0/2 的那一场
- *   node season1/replay.js plays/<A>__<B>.ndjson.gz 7 --round=3 # 只看第 3 局
- *   node season1/replay.js plays/<A>__<B>.ndjson.gz 7 --hands   # 顺带把四家的手牌摊开
+ *   node replay.js <季>/plays/<A>__<B>.ndjson.gz            # 列出这一对打了多少场
+ *   node replay.js <季>/plays/<A>__<B>.ndjson.gz 7          # 第 7 副牌,两场都放
+ *   node replay.js <季>/plays/<A>__<B>.ndjson.gz 7 --side=0 # 只看 A 坐 0/2 的那一场
+ *   node replay.js <季>/plays/<A>__<B>.ndjson.gz 7 --round=3 # 只看第 3 局
+ *   node replay.js <季>/plays/<A>__<B>.ndjson.gz 7 --hands   # 顺带把四家的手牌摊开
  *
  * 零依赖,只用 node 自带的 fs/zlib。牌谱格式见 FORMAT.md。
  *
