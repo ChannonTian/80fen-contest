@@ -1,17 +1,17 @@
 # 牌谱格式
 
-第一赛季的全部对局都在 `plays/` 里,**一对选手一个文件**,gzip 压过的 NDJSON —— 一行一场,
+每一季的全部对局都在那一季的 `<季>/plays/` 里(`season1/`、`season2/`…),**一对选手一个文件**,gzip 压过的 NDJSON —— 一行一场,
 每行是一个完整的 JSON 对象。文件名是 `<选手A>__<选手B>.ndjson.gz`。
 
 ```sh
-zcat plays/claude-opus-5__kimi-k3.ndjson.gz | head -1 | jq .
+zcat season1/plays/claude-opus-5__kimi-k3.ndjson.gz | head -1 | jq .
 ```
 
 不想自己解的话,`replay.js` 会把一局渲染成人看得懂的牌谱:
 
 ```sh
-node season1/replay.js plays/claude-opus-5__kimi-k3.ndjson.gz          # 这一对打了多少场
-node season1/replay.js plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands # 第 7 副,摊开手牌
+node replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz          # 这一对打了多少场
+node replay.js season1/plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands # 第 7 副,摊开手牌
 ```
 
 ---
@@ -36,7 +36,7 @@ node season1/replay.js plays/claude-opus-5__kimi-k3.ndjson.gz 7 --hands # 第 7 
 ## 一条 = 一局
 
 前 17 个字段和 `rounds.ndjson.gz`(逐局记录)里的**完全一样**,后 5 个是这里才有的。
-换句话说 `plays/` 是逐局记录的严格超集,只读这一个文件就够。
+换句话说 `<季>/plays/` 是逐局记录的严格超集,只读这一个文件就够。
 
 | 字段 | 含义 |
 |---|---|
@@ -130,10 +130,12 @@ declHand = [...playedBy(r.declSeat), ...r.buried].filter(id => !kitty.has(id));
 
 ## 复现
 
-决策路径上没有 `Math.random`、没有 `Date.now`,同一个种子必然发同一副牌、
-走同一条线。这一季 258722 局的逐局记录,是拿归档里那份和重跑的**逐字节比对**过的。
+决策路径上没有 `Math.random`、没有 `Date.now`,同一个种子必然发同一副牌、走同一条线。
+每一季的逐局记录都是拿归档里那份和重跑的**逐字节比对**过的。
 
-**但要用当时那个裁判。** 这份牌谱是在 2026-09-07 / 09-08 / 09-11 修掉四处已知偏差(见
-[`../RULES.md`](../RULES.md) §J)**之前**的裁判上跑的 —— 只有这样才和归档对得上,
-也才是第一赛季真正打出来的那些牌。换成修好的裁判,同一个种子会在那 0.0033% 的
-跟牌局面上分叉,之后整场就走散了。牌谱记的是**当时发生了什么**。
+**但要用那一季当时的那个裁判。** 裁判的实现和 [`RULES.md`](RULES.md) 不一致的地方就是
+主办方的 bug,发现了就公开修 —— 修完之后同一个种子会在受影响的局面上分叉,之后整场走散。
+所以每一季的牌谱记的是**当时发生了什么**,不是「现在重跑会发生什么」。
+
+哪一季跑在哪个裁判上、带着哪几处当时还没修的偏差,写在那一季自己的 README 里:
+[`season1/README.md`](season1/README.md)、[`season2/README.md`](season2/README.md)。

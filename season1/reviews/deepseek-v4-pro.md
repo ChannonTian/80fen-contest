@@ -121,5 +121,5 @@
 
 ```sh
 # 看某一局怎么打的
-node season1/replay.js season1/plays/<A>__<B>.ndjson.gz <seed> --round=<no> --hands
+node replay.js season1/plays/<A>__<B>.ndjson.gz <seed> --round=<no> --hands
 ```
